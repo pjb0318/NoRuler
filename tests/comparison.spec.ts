@@ -1,165 +1,158 @@
 import { test, expect } from '@playwright/test';
 
-test('MVP input, unit preservation, validation, presets and persistence', async ({ page }) => {
+test('adds and edits one copy independently, and restores the scene after reload', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  const rows = page.locator('.object-row');
   await expect(page.locator('canvas')).toBeVisible();
-  await expect(page.getByText('3D 화면을 불러오지 못했어요')).toHaveCount(0);
-  await page.getByLabel('제품명', { exact: true }).fill('테스트 수납함');
-  await page.locator('#width').fill('30');
-  await page.locator('#depth').fill('20');
-  await page.locator('#height').fill('15');
-  await page.getByRole('button', { name: '3D로 크기 비교하기' }).click();
-  await expect(page.locator('.object-row').first()).toContainText('30 × 20 × 15 cm');
-  await page.getByRole('button', { name: 'mm', exact: true }).click();
-  await expect(page.locator('#width')).toHaveValue('300');
-  await expect(page.locator('.object-row').first()).toContainText('300 × 200 × 150 mm');
-  await page.locator('#width').fill('-1');
-  await page.getByRole('button', { name: '3D로 크기 비교하기' }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.locator('.object-row').first()).toContainText('300 × 200 × 150 mm');
-  await page.locator('#width').fill('300');
-  for (const card of await page.locator('.preset-card').all()) if (await card.getAttribute('aria-pressed') !== 'true') await card.click();
-  await expect(page.locator('.object-row')).toHaveCount(7);
-  await page.getByRole('button', { name: '정면', exact: true }).click();
-  await page.getByRole('button', { name: '위에서', exact: true }).click();
-  await page.getByRole('button', { name: '3D', exact: true }).click();
-  const beforeZoom = await page.locator('canvas').screenshot();
-  await page.getByRole('button', { name: '확대', exact: true }).click();
-  const afterZoom = await page.locator('canvas').screenshot();
-  expect(beforeZoom.equals(afterZoom)).toBe(false);
-  await page.getByRole('button', { name: '축소', exact: true }).click();
-  await page.getByRole('button', { name: '전체 맞춤' }).click();
-  const canvasBounds = (await page.locator('canvas').boundingBox())!;
-  const beforeRotate = await page.locator('canvas').screenshot();
-  await page.mouse.move(canvasBounds.x + canvasBounds.width * .25, canvasBounds.y + canvasBounds.height * .8);
-  await page.mouse.down();
-  await page.mouse.move(canvasBounds.x + canvasBounds.width * .25 + 90, canvasBounds.y + canvasBounds.height * .8 + 30, { steps: 8 });
-  await page.mouse.up();
-  expect(beforeRotate.equals(await page.locator('canvas').screenshot())).toBe(false);
-  await page.getByRole('button', { name: '치수 표시' }).click();
-  await expect(page.locator('.dimension-label')).toHaveCount(0);
-  await page.getByRole('button', { name: '치수 표시' }).click();
-  await expect(page.locator('.dimension-label')).toHaveCount(3);
+  await button('500mL 물병 공간에 추가').click();
+  await expect(rows).toHaveCount(4);
+  const bottles = rows.filter({ hasText: '500mL 물병' });
+  await bottles.last().getByRole('button', { name: '500mL 물병 선택' }).click();
+  const height = page.getByLabel('높이 (mm)');
+  await height.fill('150');
+  await button('적용').click();
+  await expect(height).toHaveValue('150');
+  await button('실행 취소').click();
+  await expect(height).toHaveValue('0');
+  await button('다시 실행').click();
+  await expect(height).toHaveValue('150');
+  await button('+90°').click();
+  await expect(page.getByLabel('회전 (°)')).toHaveValue('90');
+  await bottles.first().getByRole('button', { name: '500mL 물병 선택' }).click();
+  await expect(height).toHaveValue('0');
+  await button('오른쪽').click();
+  await button('이름 표시').click();
   await page.reload();
-  await expect(page.locator('#product-name')).toHaveValue('테스트 수납함');
-  await expect(page.locator('.object-row')).toHaveCount(7);
-  await page.getByRole('button', { name: '초기화', exact: true }).click();
-  await expect(page.locator('#width')).toHaveValue('24');
-  await expect(page.locator('.object-row')).toHaveCount(3);
-  await page.screenshot({ path: 'test-results/desktop.png', fullPage: true, animations: 'disabled' });
+  await expect(button('오른쪽')).toHaveAttribute('aria-pressed', 'true');
+  await expect(button('이름 표시')).toHaveAttribute('aria-pressed', 'false');
+  await bottles.last().getByRole('button', { name: '500mL 물병 선택' }).click();
+  await expect(height).toHaveValue('150');
+  await expect(page.getByLabel('회전 (°)')).toHaveValue('90');
+  await bottles.last().getByRole('button', { name: '500mL 물병 공간에서 제거' }).click();
+  await expect(bottles).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
-test('dragging moves only the box; options preserve placement and both reset actions restore it', async ({ page }) => {
-  const errors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
+test('keeps placed instances when their saved model is removed', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '위에서', exact: true }).click();
-  const canvas = page.locator('canvas');
-  const productLabel = page.locator('.product-label');
-  const initial = (await productLabel.boundingBox())!;
-  const presetLabel = page.locator('.object-label:not(.product-label)').first();
-  const presetBefore = (await presetLabel.boundingBox())!;
-  const dimensionBefore = (await page.locator('.dimension-w').boundingBox())!;
-  const start = { x: initial.x + initial.width / 2, y: initial.y + initial.height / 2 };
-  await page.mouse.move(start.x, start.y);
-  await expect(canvas).toHaveCSS('cursor', 'grab');
-  await page.mouse.down();
-  await expect(page.locator('.viewer')).toHaveClass(/is-moving-product/);
-  await page.mouse.move(start.x + 40, start.y + 55, { steps: 10 });
-  await page.mouse.up();
-  await expect(page.locator('.viewer')).not.toHaveClass(/is-moving-product/);
-  await expect(page.getByRole('button', { name: '상자 위치 초기화', exact: true })).toBeEnabled();
-  await expect.poll(async () => Math.abs((await productLabel.boundingBox())!.x - initial.x - 40)).toBeLessThan(1);
-  const moved = (await productLabel.boundingBox())!;
-  expect(Math.abs(moved.y - initial.y - 55)).toBeLessThan(1);
-  const presetAfter = (await presetLabel.boundingBox())!;
-  expect(Math.abs(presetAfter.x - presetBefore.x)).toBeLessThan(1);
-  expect(Math.abs(presetAfter.y - presetBefore.y)).toBeLessThan(1);
-  const dimensionAfter = (await page.locator('.dimension-w').boundingBox())!;
-  expect(Math.abs(dimensionAfter.x - dimensionBefore.x - 40)).toBeLessThan(1);
-  expect(Math.abs(dimensionAfter.y - dimensionBefore.y - 55)).toBeLessThan(1);
-  await page.getByRole('button', { name: 'mm', exact: true }).click();
-  await page.getByRole('button', { name: '치수 표시', exact: true }).click();
-  await page.getByRole('button', { name: '격자 표시', exact: true }).click();
-  expect(Math.abs((await productLabel.boundingBox())!.x - moved.x)).toBeLessThan(1);
-  expect(Math.abs((await productLabel.boundingBox())!.y - moved.y)).toBeLessThan(1);
-  await page.getByRole('button', { name: '치수 표시', exact: true }).click();
-  await page.getByRole('button', { name: '격자 표시', exact: true }).click();
-  await page.getByRole('button', { name: '상자 위치 초기화', exact: true }).click();
-  await expect.poll(async () => Math.abs((await productLabel.boundingBox())!.x - initial.x)).toBeLessThan(1);
-  await expect(page.getByRole('button', { name: '상자 위치 초기화', exact: true })).toBeDisabled();
-  await page.mouse.move(start.x, start.y);
-  await page.mouse.down();
-  await page.mouse.move(start.x - 45, start.y + 25, { steps: 8 });
-  await page.mouse.up();
-  await page.getByRole('button', { name: '전체 맞춤', exact: true }).click();
-  await expect(page.getByRole('button', { name: '상자 위치 초기화', exact: true })).toBeEnabled();
-  await expect(productLabel).toBeInViewport();
-  await expect(presetLabel).toBeInViewport();
-  await page.getByRole('button', { name: '초기화', exact: true }).click();
-  await expect(page.getByRole('button', { name: '상자 위치 초기화', exact: true })).toBeDisabled();
-  await page.screenshot({ path: 'test-results/drag-desktop.png', fullPage: true, animations: 'disabled' });
-  expect(errors).toEqual([]);
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  await page.getByLabel('제품명', { exact: true }).fill('테스트 수납함');
+  await button('3D로 크기 비교하기').click();
+  await button('프리셋 등록').click();
+  await button('꺼내기').first().click();
+  const boxes = page.locator('.object-row').filter({ hasText: '테스트 수납함' });
+  await expect(boxes).toHaveCount(2);
+  await button('기록 삭제').click();
+  await button('프리셋 삭제').click();
+  await expect(boxes).toHaveCount(2);
+  await expect(button('꺼내기')).toHaveCount(0);
 });
 
-test('touch dragging and cancellation release camera controls', async ({ browser }) => {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-  const page = await context.newPage();
+test('reviews a diagram, preserves converted units, and requires confirmation of uncertain axes', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '위에서', exact: true }).click();
-  await page.locator('canvas').scrollIntoViewIfNeeded();
-  const before = (await page.locator('.product-label').boundingBox())!;
-  const x = before.x + before.width / 2, y = before.y + before.height / 2;
-  const cdp = await context.newCDPSession(page);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-  await expect(page.locator('.viewer')).toHaveClass(/is-moving-product/);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + 30, y: y + 35 }] });
-  await expect.poll(async () => Math.abs((await page.locator('.product-label').boundingBox())!.x - before.x - 30)).toBeLessThan(2);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
-  await expect(page.locator('.viewer')).not.toHaveClass(/is-moving-product/);
-  await expect(page.getByRole('button', { name: '상자 위치 초기화', exact: true })).toBeEnabled();
-  // Starting a pinch on the box must still zoom instead of trapping the gesture.
-  const moved = (await page.locator('.product-label').boundingBox())!;
-  const first = { x: moved.x + moved.width / 2, y: moved.y + moved.height / 2, id: 1 };
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first] });
-  await expect(page.locator('.viewer')).toHaveClass(/is-moving-product/);
-  const second = { x: first.x + 45, y: first.y, id: 2 };
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [first, second] });
-  await expect(page.locator('.viewer')).not.toHaveClass(/is-moving-product/);
-  const beforePinch = await page.locator('canvas').screenshot();
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...first, x: first.x - 15 }, { ...second, x: second.x + 15 }] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  expect(beforePinch.equals(await page.locator('canvas').screenshot())).toBe(false);
-  // A subsequent empty-space gesture should rotate again after cancellation.
-  const canvas = (await page.locator('canvas').boundingBox())!;
-  const imageBefore = await page.locator('canvas').screenshot();
-  const blank = { x: canvas.x + 35, y: canvas.y + canvas.height - 65 };
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [blank] });
-  await expect(page.locator('.viewer')).not.toHaveClass(/is-moving-product/);
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: blank.x + 45, y: blank.y - 35 }] });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  expect(imageBefore.equals(await page.locator('canvas').screenshot())).toBe(false);
-  await page.screenshot({ path: 'test-results/drag-mobile.png', fullPage: true, animations: 'disabled' });
-  await context.close();
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  await button('예시 도면 써보기').click();
+  await page.getByRole('button', { name: /원본 확대/ }).click();
+  await button('원본 더 확대').click();
+  await expect(page.getByRole('dialog')).toContainText('150%');
+  await button('닫기').click();
+  await page.locator('#depth').fill('80');
+  await button('3D로 크기 비교하기').click();
+  await expect(page.getByRole('alert')).toContainText('확인 필요');
+  await button('높이 치수 확인').click();
+  await button('축 교환').click();
+  await expect(page.locator('#width')).toHaveValue('80');
+  await expect(page.locator('#depth')).toHaveValue('130');
+  await button('가로 치수 확인').click();
+  await button('깊이 치수 확인').click();
+  await button('cm').click();
+  await expect(page.locator('#width')).toHaveValue('8');
+  await button('3D로 크기 비교하기').click();
+  await expect(page.locator('.object-row').last()).toContainText('8 × 13 × 3.5 cm');
 });
 
-test('mobile layout, empty selection, and help', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test('uses only the chosen option from a multiple-candidate response', async ({ page }) => {
+  const reading = (mm: number) => ({ mm, evidence: '치수표', needsReview: false });
+  await page.route('**/api/image-dimensions', route => route.fulfill({ json: {
+    candidates: [
+      { label: 'S', dimensions: { width: reading(100), depth: reading(80), height: reading(50) } },
+      { label: 'L', dimensions: { width: reading(250), depth: reading(140), height: reading(80) } },
+    ],
+  } }));
   await page.goto('/');
-  await page.getByRole('button', { name: '500mL 물병 비교에서 제거' }).click();
-  await page.getByRole('button', { name: '스마트폰 비교에서 제거' }).click();
-  await expect(page.locator('.object-row')).toHaveCount(1);
-  await expect(page.locator('.empty-selection')).toBeVisible();
-  await page.getByRole('button', { name: '사용 방법', exact: true }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await page.keyboard.press('Shift+Tab');
-  await expect(page.getByRole('button', { name: '비교 시작하기' })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByRole('button', { name: '초기화', exact: true }).click();
-  await page.screenshot({ path: 'test-results/mobile.png', fullPage: true, animations: 'disabled' });
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  const large = page.getByRole('radio', { name: /^L / });
+  await large.check();
+  await expect(page.getByRole('radio', { name: /^S / })).not.toBeChecked();
+  await expect(page.locator('#width')).toHaveValue('250');
+  await expect(page.locator('#depth')).toHaveValue('140');
+  await expect(page.locator('#height')).toHaveValue('80');
+});
+
+test('cancels a touch handle drag when a second finger lands', async ({ browser }) => {
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 420, height: 900 } });
+  try {
+    const page = await context.newPage();
+    await page.goto('/');
+    await page.getByRole('button', { name: '내가 궁금한 상자 선택', exact: true }).click();
+    await page.getByRole('button', { name: '정면', exact: true }).click();
+    await page.getByRole('button', { name: '선택 맞춤', exact: true }).click();
+    const canvas = page.locator('canvas');
+    await canvas.scrollIntoViewIfNeeded();
+    const bounds = (await canvas.boundingBox())!;
+    const x = Math.round(bounds.x + bounds.width / 2);
+    let y = Math.round(bounds.y + bounds.height / 2) - 40;
+    // Locate the Y handle without assuming its exact rendered length.
+    for (const dy of [40, 30, 50, 20, 60]) {
+      y = Math.round(bounds.y + bounds.height / 2) - dy;
+      await page.mouse.move(x, y);
+      if (await canvas.evaluate(el => (el as HTMLCanvasElement).style.cursor === 'grab')) break;
+    }
+    await expect(canvas).toHaveCSS('cursor', 'grab');
+    const cdp = await context.newCDPSession(page);
+    const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', touchPoints: { x: number; y: number; id: number }[]) =>
+      cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+    await touch('touchStart', [{ x, y, id: 1 }]);
+    await touch('touchMove', [{ x, y: y - 35, id: 1 }]);
+    await expect(page.locator('.viewer')).toHaveClass(/is-moving-product/);
+    await touch('touchStart', [{ x, y: y - 35, id: 1 }, { x: x - 60, y, id: 2 }]);
+    await expect(page.locator('.viewer')).not.toHaveClass(/is-moving-product/);
+    await touch('touchEnd', []);
+    await expect(page.getByLabel('높이 (mm)')).toHaveValue('0');
+    await expect(page.getByRole('button', { name: '실행 취소' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '정면', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  } finally {
+    await context.close();
+  }
+});
+
+test('puts a monitor on a platform and preserves overlap correction with snapping off', async ({ page }) => {
+  await page.addInitScript(() => {
+    const positionMm = { x: 0, y: 0, z: 0 };
+    localStorage.setItem('noruler-v2', JSON.stringify({
+      schemaVersion: 2, library: [], unit: 'mm',
+      instances: [
+        { id: 'platform', assetId: null, snapshot: { name: '받침대', width: 700, depth: 400, height: 100 }, positionMm, yawDeg: 0 },
+        { id: 'monitor', assetId: 'monitor', shape: 'monitor', snapshot: { name: '모니터', width: 615, depth: 200, height: 455 }, positionMm: { ...positionMm, y: 150 }, yawDeg: 0 },
+      ],
+    }));
+  });
+  await page.goto('/');
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  await button('모니터 선택').click();
+  const height = page.getByLabel('높이 (mm)');
+  await height.fill('110');
+  await button('적용').click();
+  await expect(height).toHaveValue('100');
+  await button('자동 붙이기 켜짐').click();
+  await height.fill('110');
+  await button('적용').click();
+  await expect(height).toHaveValue('110');
+  await height.fill('90');
+  await button('적용').click();
+  await expect(height).toHaveValue('100');
 });

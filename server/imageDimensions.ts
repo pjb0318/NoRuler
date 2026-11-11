@@ -92,6 +92,8 @@ export function imageDimensionsMiddleware(apiKey: string | undefined): Connect.N
           },
         }),
       });
+      if (response.status === 429) return reply(429, { error: '분석 사용량 한도에 도달했어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.' });
+      if (response.status === 401 || response.status === 403) return reply(503, { error: '분석 서비스의 API 키 설정을 확인해 주세요.' });
       if (!response.ok) return reply(502, { error: '분석 서비스가 요청을 처리하지 못했어요. API 설정을 확인한 뒤 다시 시도해 주세요.' });
       const result = await response.json();
       const parts: { text?: string; thought?: boolean }[] = result.candidates?.[0]?.content?.parts ?? [];
@@ -106,7 +108,13 @@ export function imageDimensionsMiddleware(apiKey: string | undefined): Connect.N
         ])) as ImageDimensions,
       }));
       return reply(200, { candidates });
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        return reply(504, { error: '분석 시간이 초과됐어요. 다시 시도하거나 직접 입력해 주세요.' });
+      }
+      if (error instanceof SyntaxError || error instanceof Error && error.message === 'Invalid model response') {
+        return reply(502, { error: '분석 결과 형식을 읽지 못했어요. 다시 시도하거나 직접 입력해 주세요.' });
+      }
       return reply(502, { error: '이미지를 분석하지 못했어요. 다시 시도하거나 치수를 직접 입력해 주세요.' });
     }
   };

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { Box3, Vector3 } from 'three';
 import { AXES, DEFAULT_PRODUCT, PRESETS, WORLD_SCALE, displayValue, parseDimensions, sceneLayout } from './domain.ts';
 import { createModel } from './scene.ts';
+import { resolvePlacement } from './placement.ts';
+import { addInstance, changeScene, initialInstances, stepScene } from './workspace.ts';
+import { readWorkspace, writeWorkspace } from './storage.ts';
 
 test('cm and mm produce exactly the same physical dimensions', () => {
   assert.deepEqual(parseDimensions({ width: '24', depth: '18', height: '16' }, 'cm'), { width: 240, depth: 180, height: 160 });
@@ -46,4 +49,84 @@ test('dimensions are not normalized individually, including very small and large
     assert.ok(Math.abs(bounds.x - size * WORLD_SCALE) < .00001);
   }
   assert.equal(AXES.length, 3);
+});
+
+test('nearby objects land on top while the underside is never used', () => {
+  const target = new Box3(new Vector3(0, 0, 0), new Vector3(6, 2, 6));
+  const monitor = new Box3(new Vector3(2, 1.8, 2), new Vector3(4, 3.8, 4));
+  const stacked = resolvePlacement(monitor, [target], 0);
+  assert.equal(stacked.kind, 'contact');
+  if (stacked.kind !== 'contact') return;
+  assert.equal(stacked.axis, 'y');
+  assert.equal(stacked.side, 'max');
+  assert.equal(monitor.clone().translate(stacked.offset).min.y, 2);
+
+  const hovering = monitor.clone().translate(new Vector3(0, .3, 0));
+  const down = resolvePlacement(hovering, [target], .2);
+  assert.equal(down.kind, 'contact');
+  if (down.kind === 'contact') assert.ok(down.offset.y < 0);
+  assert.equal(resolvePlacement(hovering, [target], 0).kind, 'free');
+
+  const platform = target.clone().translate(new Vector3(0, 5, 0));
+  const below = new Box3(new Vector3(2, 3.5, 2), new Vector3(4, 5.1, 4));
+  const escape = resolvePlacement(below, [platform], .2);
+  assert.equal(escape.kind, 'contact');
+  if (escape.kind === 'contact') assert.notEqual(escape.side === 'min' && escape.axis === 'y', true);
+});
+
+test('rejects a drop when every candidate still intersects another object', () => {
+  const moving = new Box3(new Vector3(-1, 0, -1), new Vector3(1, 2, 1));
+  const target = new Box3(new Vector3(-4, 0, -4), new Vector3(4, 4, 4));
+  const obstacles = [
+    target,
+    ...[-5, 5].map(x => moving.clone().translate(new Vector3(x, 0, 0))),
+    ...[-5, 5].map(z => moving.clone().translate(new Vector3(0, 0, z))),
+    moving.clone().translate(new Vector3(0, 4, 0)),
+  ];
+  assert.equal(resolvePlacement(moving, obstacles, .2).kind, 'blocked');
+});
+
+test('copies a model independently and restores the whole action when undone', () => {
+  const initial = initialInstances(DEFAULT_PRODUCT, []);
+  const withCopy = changeScene({ past: [], present: initial, future: [] }, items => addInstance(items, DEFAULT_PRODUCT, null));
+  const [original, copy] = withCopy.present;
+  assert.notEqual(original.id, copy.id);
+  assert.ok(copy.positionMm.x - original.positionMm.x > DEFAULT_PRODUCT.width);
+  const moved = changeScene(withCopy, items => [items[0], { ...items[1], positionMm: { x: 400, y: 200, z: 0 }, yawDeg: 45 }]);
+  const undone = stepScene(moved, 'undo');
+  assert.deepEqual(undone.present, withCopy.present);
+  assert.deepEqual(stepScene(undone, 'redo').present, moved.present);
+  const removed = changeScene(undone, items => items.slice(1));
+  assert.equal(removed.future.length, 0);
+  assert.equal(removed.present[0].id, copy.id);
+});
+
+test('migrates an earlier workspace and restores duplicate placements, camera and preferences', () => {
+  const values = new Map<string, string>();
+  const priorStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value) },
+  });
+  try {
+    const product = { ...DEFAULT_PRODUCT, name: '기존 제품', id: 'custom-existing' };
+    const legacy = JSON.stringify({
+      product, library: [{ ...product, history: true, preset: true }], unit: 'mm', selected: ['bottle', product.id],
+    });
+    values.set('noruler-v1', legacy);
+    const migrated = readWorkspace();
+    assert.equal(migrated.library[0].id, product.id);
+    assert.equal(migrated.instances.length, 3);
+    assert.equal(migrated.instances.filter(item => item.assetId === product.id).length, 2);
+    const instances = addInstance(migrated.instances, product, product.id);
+    instances[3] = { ...instances[3], positionMm: { x: 400, y: 210, z: 40 }, yawDeg: 45 };
+    const camera = { positionMm: { x: 0, y: 600, z: 200 }, targetMm: { x: 0, y: 0, z: 0 }, zoom: 1.25, halfHeight: 5, aspect: 1.3 };
+    const workspace = { ...migrated, instances, camera, preferences: { ...migrated.preferences, names: false } };
+    writeWorkspace(workspace);
+    assert.deepEqual(readWorkspace(), workspace);
+    assert.equal(values.get('noruler-v1'), legacy);
+  } finally {
+    if (priorStorage) Object.defineProperty(globalThis, 'localStorage', priorStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
 });

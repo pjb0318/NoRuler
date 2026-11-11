@@ -47,3 +47,46 @@
 .object-transform-modes button[aria-pressed=true]{color:#285baf;background:#eaf2ff}
 .view-switch button{min-height:32px}
 @media(max-width:480px){.view-switch button{padding-inline:6px;min-height:30px}.view-switch{right:auto;max-width:calc(100% - 32px)}}
+
+.view-indicator{position:absolute;right:18px;top:58px;padding:4px 8px;border-radius:5px;background:#ffffffe8;color:#536b8f;font-size:10px;pointer-events:none}
+.axis-guide,.pose-actions,.pose-form{display:flex;align-items:center;gap:5px;margin-top:6px;font-size:10px;color:#536b8f}
+.axis-guide span:nth-child(1){color:#a13d3d}
+.axis-guide span:nth-child(2){color:#39764b}
+.axis-guide span:nth-child(3){color:#355caa}
+.pose-form label{display:grid;gap:2px}
+.pose-form input{width:55px;padding:3px;border:1px solid #d7e2f1;border-radius:4px;color:#30425c}
+.pose-form button,.pose-actions button{padding:4px 6px;border:1px solid #d7e2f1;border-radius:4px;white-space:nowrap}
+.pose-form button{align-self:end}
+@media(max-width:480px){.view-indicator{top:125px;right:10px}.move-controls{bottom:52px}.pose-actions button,.pose-form button{min-height:28px}}
+.scene-history-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+.scene-history-actions button:disabled{opacity:.4;cursor:default}
+.object-row .remove-object{font-size:10px;white-space:nowrap}
+.object-row .object-icon[aria-pressed=true]{background:#e8f0ff;color:#386bc4}
+.edit-mode{margin-bottom:12px;padding:6px 8px;color:#386bc4;border:1px solid #d7e2f1;border-radius:5px}
+.snap-toggle{margin-top:5px;padding:4px 6px;border:1px solid #d7e2f1;border-radius:4px;font-size:10px;color:#536b8f}
+.snap-toggle[aria-pressed=true]{background:#ebf6f2;color:#326a58}
+.image-paste{margin-top:7px;color:#6f7e94;font-size:10px}
+.image-preview-button{display:block;width:100%;margin-top:6px;text-align:right;color:#386bc4;font-size:10px}
+.image-preview-button span{display:inline-block;padding:4px}
+.image-review-dialog{width:min(840px,calc(100% - 32px));margin:auto;padding:12px;border:1px solid #d7e2f1;border-radius:12px;background:white;color:#30425c}
+.image-review-dialog::backdrop{background:#17264288}
+.image-review-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px}
+.image-review-toolbar button,.axis-swap button,.confirm-axis{padding:5px 8px;border:1px solid #d7e2f1;border-radius:5px;color:#386bc4;background:#fff}
+.image-review-toolbar button:last-child{margin-left:auto}
+.image-review-toolbar button:disabled{opacity:.4}
+.image-review-viewport{overflow:auto;max-height:74dvh}
+.image-review-viewport img{display:block;max-width:none;max-height:none;object-fit:contain}
+.axis-swap{display:flex;gap:6px;margin-top:8px;font-size:10px}
+.axis-swap select{border:1px solid #d7e2f1;border-radius:5px;color:#536b8f;background:#fff;padding:4px}
+.confirm-axis{margin-top:3px;font-size:9px}
+.pose-actions{flex-wrap:wrap;max-width:180px}
+.pose-error{margin-top:6px;font-size:10px;color:#bf4343}
+.save-edited-model{margin:7px 0 0}
+
+.viewer-shell{position:relative}
+@media(max-width:600px){
+  .viewer-shell>.move-controls{position:static;margin-top:8px;padding:10px 12px;box-shadow:none}
+  .move-controls-header span{max-width:80%}
+  .pose-actions{max-width:none}
+}
+@media(max-width:600px){.pose-form input{font-size:16px;width:68px}}

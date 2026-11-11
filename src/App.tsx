@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowRight, Box, Check, ChevronDown, CircleHelp, File, Info, Keyboard, Laptop, Monitor, RotateCcw, Smartphone, Sparkles, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowRight, Box, Copy, ChevronDown, CircleHelp, File, Info, Keyboard, Laptop, Monitor, Redo2, RotateCcw, Undo2, Smartphone, Sparkles, X } from 'lucide-react';
 import SceneViewer from './SceneViewer';
 import ModelLibrary from './ModelLibrary';
 import ImageInput from './ImageInput';
 import type { ImageDimensions } from './imageDimensions';
-import { AXES, DEFAULT_PRODUCT, PRESETS, dimensionText, displayValue, formatNumber, parseDimensions, readSaved } from './domain';
-import type { Dimensions, Preset, PresetId, SavedModel, Unit } from './domain';
+import { AXES, DEFAULT_PRODUCT, PRESETS, dimensionText, displayValue, formatNumber, parseDimensions } from './domain';
+import type { Dimensions, PresetId, SavedModel, Unit } from './domain';
+import { addInstance, changeScene, initialInstances, placeInstance, resetLayout, stepScene, updateSceneMetadata } from './workspace';
+import type { Pose, SceneHistory, SceneInstance } from './workspace';
+import { readWorkspace, writeWorkspace } from './storage';
+import type { CameraState, Preferences, Workspace } from './storage';
 
 function PresetIcon({ id, size = 26 }: { id: PresetId; size?: number }) {
   if (id === 'bottle') return <svg width={size} height={size} viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 3h6v4l3 4v12a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V11l3-4V3Z" /><path d="M11 6h6M8 14h12M8 20h12M12 3h4" /></svg>;
@@ -17,29 +21,70 @@ const axisLabels = { width: ['가로', 'Width', 'W'], depth: ['깊이', 'Depth',
 const makeDraft = (d: Dimensions, unit: Unit) => Object.fromEntries(AXES.map(axis => [axis, displayValue(d[axis], unit)])) as Record<keyof Dimensions, string>;
 
 export default function App() {
-  const [initial] = useState(readSaved);
+  const [initial] = useState(readWorkspace);
   const [library, setLibrary] = useState(initial.library);
-  const [product, setProduct] = useState(initial.product);
+  const [history, setHistory] = useState<SceneHistory>({ present: initial.instances, past: [], future: [] });
+  const instances = history.present;
+  const [preferences, setPreferences] = useState(initial.preferences);
+  const [storageFailed, setStorageFailed] = useState(false);
+  const pendingSave = useRef<number | undefined>(undefined);
+  const saved = useRef<Workspace>(initial);
+  function setInstances(change: (items: SceneInstance[]) => SceneInstance[]) {
+    setHistory(current => changeScene(current, change));
+  }
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editing = instances.find(item => item.id === editingId);
   const [unit, setUnit] = useState<Unit>(initial.unit);
-  const [name, setName] = useState((initial.product ?? DEFAULT_PRODUCT).name);
-  const [draft, setDraft] = useState(() => makeDraft(initial.product ?? DEFAULT_PRODUCT, initial.unit));
-  const [selected, setSelected] = useState<PresetId[]>(initial.selected);
+  const [name, setName] = useState((initial.instances.find(item => !item.shape)?.snapshot ?? DEFAULT_PRODUCT).name);
+  const [draft, setDraft] = useState(() => makeDraft(initial.instances.find(item => !item.shape)?.snapshot ?? DEFAULT_PRODUCT, initial.unit));
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [help, setHelp] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [imageKey, setImageKey] = useState(0);
   const [readings, setReadings] = useState<ImageDimensions | null>(null);
-  const availablePresets = useMemo<Preset[]>(() => [
-    ...PRESETS,
-    ...library.filter(model => model.preset).map(model => ({ ...model, detail: '내 프리셋', color: '#89b2ff' })),
-  ], [library]);
-  const presets = useMemo(() => availablePresets.filter(p => selected.includes(p.id)), [availablePresets, selected]);
+  const [reviewedAxes, setReviewedAxes] = useState<Partial<Record<keyof Dimensions, 'confirmed' | 'edited' | 'pending'>>>({});
+  const [swapAxes, setSwapAxes] = useState('width-depth');
   const parsed = parseDimensions(draft, unit);
-  const dirty = !product || name.trim() !== product.name || !parsed || AXES.some(axis => parsed[axis] !== product[axis]);
+  const needsAxisReview = (axis: keyof Dimensions) => !!readings && (
+    reviewedAxes[axis] === 'pending' && draft[axis].trim() !== '' ||
+    !reviewedAxes[axis] && readings[axis].mm !== null && readings[axis].needsReview
+  );
+  const dirty = !editing || name.trim() !== editing.snapshot.name || !parsed || AXES.some(axis => parsed[axis] !== editing.snapshot[axis]);
+  function save() {
+    window.clearTimeout(pendingSave.current);
+    try {
+      writeWorkspace(saved.current);
+      setStorageFailed(false);
+    } catch { setStorageFailed(true); }
+  }
+  function recordCamera(camera: CameraState) {
+    saved.current = { ...saved.current, camera };
+    window.clearTimeout(pendingSave.current);
+    pendingSave.current = window.setTimeout(save, 160);
+  }
   useEffect(() => {
-    try { localStorage.setItem('noruler-v1', JSON.stringify({ product, unit, selected, library })); } catch { /* Comparison works without browser storage. */ }
-  }, [product, unit, selected, library]);
+    saved.current = { ...saved.current, instances, unit, library, preferences };
+    save();
+  }, [instances, unit, library, preferences]);
+  useEffect(() => {
+    window.addEventListener('pagehide', save);
+    return () => { window.removeEventListener('pagehide', save); window.clearTimeout(pendingSave.current); };
+  }, []);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey ||
+          (event.target instanceof HTMLElement && event.target.closest('input, textarea, [contenteditable="true"]'))) return;
+      if (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        setHistory(current => stepScene(current, event.shiftKey || event.key.toLowerCase() === 'y' ? 'redo' : 'undo'));
+      }
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, []);
+
   useEffect(() => {
     if (!help) return;
     const close = (event: KeyboardEvent) => {
@@ -55,14 +100,37 @@ export default function App() {
     return () => { window.removeEventListener('keydown', close); document.querySelector<HTMLButtonElement>('.help-button')?.focus(); };
   }, [help]);
   function useImageDimensions(result: ImageDimensions | null) {
+    setReviewedAxes({});
     setReadings(result);
-    if (!result) return;
+    setError('');
+    if (!result) {
+      if (readings) setDraft(current => {
+        const next = { ...current };
+        for (const axis of AXES) {
+          if (readings[axis].mm !== null && reviewedAxes[axis] !== 'edited') next[axis] = '';
+        }
+        return next;
+      });
+      return;
+    }
     setUnit('mm');
     setDraft(Object.fromEntries(AXES.map(axis => [
       axis, result[axis].mm === null ? '' : displayValue(result[axis].mm, 'mm'),
     ])) as Record<keyof Dimensions, string>);
     setError('');
     setStatus('이미지의 치수 후보를 입력했어요. 원본과 비교해 확인해 주세요.');
+  }
+  function exchangeImageAxes() {
+    if (!readings) return;
+    const [a, b] = swapAxes.split('-') as [keyof Dimensions, keyof Dimensions];
+    setReadings({
+      ...readings,
+      [a]: { ...readings[b], needsReview: true },
+      [b]: { ...readings[a], needsReview: true },
+    });
+    setDraft(current => ({ ...current, [a]: current[b], [b]: current[a] }));
+    setReviewedAxes(current => ({ ...current, [a]: 'pending', [b]: 'pending' }));
+    setError('');
   }
   function switchUnit(next: Unit) {
     if (next === unit) return;
@@ -74,40 +142,92 @@ export default function App() {
     event.preventDefault();
     if (!name.trim()) { setError('제품명을 입력해 주세요.'); return; }
     if (!parsed) { setError(`각 치수는 ${unit === 'cm' ? '0.01~1,000 cm' : '0.1~10,000 mm'} 사이의 숫자로 입력해 주세요.`); return; }
+    if (AXES.some(needsAxisReview)) {
+      setError('확인 필요로 표시된 치수를 확인하거나 수정해 주세요.');
+      return;
+    }
+    if (editing) {
+      if (AXES.every(axis => editing.snapshot[axis] === parsed[axis])) return;
+      const candidate = placeInstance({
+        ...editing, shape: undefined, snapshot: { ...parsed, name: editing.snapshot.name },
+      }, instances);
+      if (!candidate) {
+        setError('크기를 바꾸면 주변 물건과 겹쳐요. 먼저 물건을 옮겨 주세요.');
+        return;
+      }
+      setInstances(current => current.map(item => item.id === editing.id ? candidate : item));
+      setError('');
+      setStatus('선택한 물건의 치수를 수정했어요.');
+      return;
+    }
     const existing = library.find(model => model.name === name.trim() && AXES.every(axis => model[axis] === parsed[axis]));
     const id = existing?.id ?? `custom-${crypto.randomUUID()}`;
     const saved: SavedModel = { ...parsed, id, name: name.trim(), history: true, preset: existing?.preset ?? false };
     setLibrary(current => [saved, ...current.filter(model => model.id !== id)]);
-    setProduct(saved);
+    setInstances(current => addInstance(current, saved, saved.id));
     setError('');
     setStatus('입력한 크기를 3D 공간에 반영했어요.');
   }
-  function openModel(model: SavedModel) {
+  function resetInput() {
+    setEditingId(null);
     setImageKey(key => key + 1);
-    setProduct(model);
-    setName(model.name);
-    setDraft(makeDraft(model, unit));
     setReadings(null);
+    setReviewedAxes({});
     setError('');
-    setStatus(`${model.name}을 3D 공간에 꺼냈어요.`);
+  }
+  function openModel(model: SavedModel) {
+    setInstances(current => addInstance(current, model, model.id));
+    setStatus(`${model.name}을 3D 공간에 추가했어요.`);
   }
   function renameModel(id: SavedModel['id'], nextName: string) {
     setLibrary(current => current.map(model => model.id === id ? { ...model, name: nextName } : model));
-    if (product?.id === id) {
-      setProduct({ ...product, name: nextName });
-      setName(nextName);
-    }
+    setHistory(current => updateSceneMetadata(current, item => item.assetId === id ? { ...item, snapshot: { ...item.snapshot, name: nextName } } : item));
+    if (editing?.assetId === id) setName(nextName);
   }
   function changeLibrary(id: SavedModel['id'], field: 'history' | 'preset', enabled: boolean) {
-    setLibrary(current => current.map(model => model.id === id ? { ...model, [field]: enabled } : model)
-      .filter(model => model.history || model.preset));
-    if (field === 'preset' && !enabled) setSelected(current => current.filter(item => item !== id));
+    const next = library.map(model => model.id === id ? { ...model, [field]: enabled } : model)
+      .filter(model => model.history || model.preset);
+    setLibrary(next);
+    if (!next.some(model => model.id === id)) {
+      setHistory(current => updateSceneMetadata(current, item => item.assetId === id ? { ...item, assetId: null } : item));
+    }
+  }
+  function editInstance(item: SceneInstance) {
+    resetInput();
+    setSelectedId(item.id);
+    setEditingId(item.id);
+    setName(item.snapshot.name);
+    setDraft(makeDraft(item.snapshot, unit));
+  }
+  function commitPose(id: string, pose: Pose) {
+    setInstances(current => {
+      const item = current.find(other => other.id === id);
+      if (!item || Math.abs(item.yawDeg - pose.yawDeg) < 1e-6 &&
+          (['x', 'y', 'z'] as const).every(axis => Math.abs(item.positionMm[axis] - pose.positionMm[axis]) < 1e-6)) return current;
+      return current.map(other => other.id === id ? { ...other, ...pose } : other);
+    });
+  }
+  function resetOne(id: string) {
+    const home = resetLayout(instances).find(item => item.id === id);
+    const candidate = home ? placeInstance(home, instances) : null;
+    if (!candidate) return false;
+    commitPose(id, candidate);
+    return true;
+  }
+  function saveEditedModel(item: SceneInstance) {
+    const id = `custom-${crypto.randomUUID()}` as const;
+    setLibrary(current => [{ ...item.snapshot, id, history: true, preset: false }, ...current]);
+    setHistory(current => updateSceneMetadata(current, instance => instance.id === item.id ? { ...instance, assetId: id } : instance));
+    setStatus('수정한 물건을 새 모델로 저장했어요.');
   }
   function reset() {
+    resetInput();
     setResetKey(value => value + 1);
-    setReadings(null);
-    setProduct(DEFAULT_PRODUCT); setName(DEFAULT_PRODUCT.name); setUnit('cm');
-    setDraft(makeDraft(DEFAULT_PRODUCT, 'cm')); setSelected(['bottle', 'phone']); setError('');
+    setSelectedId(null);
+    setInstances(() => initialInstances(DEFAULT_PRODUCT, PRESETS.filter(item => item.id === 'bottle' || item.id === 'phone')));
+    setName(DEFAULT_PRODUCT.name);
+    setUnit('cm');
+    setDraft(makeDraft(DEFAULT_PRODUCT, 'cm'));
     setStatus('처음 예시로 돌아왔어요.');
   }
   return <>
@@ -122,30 +242,74 @@ export default function App() {
         <aside className="sidebar">
           <section className="product-panel">
             <div className="section-heading"><span className="step">01</span><h2>어떤 제품인가요?</h2><Box size={18} /></div>
-            <ImageInput key={`${resetKey}-${imageKey}`} onRead={useImageDimensions} />
+            {editing ? <button className="edit-mode" onClick={resetInput}>치수 수정 닫기</button> : <ImageInput key={`${resetKey}-${imageKey}`} onRead={useImageDimensions} />}
             <form onSubmit={apply} noValidate>
               <label className="field-label" htmlFor="product-name">제품명</label>
-              <input id="product-name" className="name-input" value={name} onChange={e => setName(e.target.value)} maxLength={60} placeholder="예: 사고 싶은 수납함" autoComplete="off" />
+              <input id="product-name" className="name-input" value={name} readOnly={!!editing} onChange={e => setName(e.target.value)} maxLength={60} placeholder="예: 사고 싶은 수납함" autoComplete="off" />
               <div className="dimensions-heading"><span className="field-label">제품 치수</span><div className="unit-switch" aria-label="치수 단위">{(['mm', 'cm'] as Unit[]).map(value => <button type="button" key={value} aria-pressed={unit === value} onClick={() => switchUnit(value)}>{value}</button>)}</div></div>
-              <div className="dimension-fields">{AXES.map(axis => <div className="dimension-field" key={axis}><label htmlFor={axis}><span className={`axis-dot ${axis}`} />{axisLabels[axis][0]}<span>{axisLabels[axis][1]}</span></label><div><input id={axis} type="number" inputMode="decimal" step="any" min={unit === 'cm' ? .01 : .1} max={unit === 'cm' ? 1000 : 10000} value={draft[axis]} onChange={e => setDraft({ ...draft, [axis]: e.target.value })} aria-invalid={!!error && !parsed} aria-describedby={error ? 'input-error' : undefined} /><span>{unit}</span></div>{readings && <small className="image-reading">
-                {readings[axis].mm === null ? '직접 입력' : readings[axis].needsReview ? '확인 필요' : '이미지에서 읽음'}
+              <div className="dimension-fields">{AXES.map(axis => <div className="dimension-field" key={axis}><label htmlFor={axis}><span className={`axis-dot ${axis}`} />{axisLabels[axis][0]}<span>{axisLabels[axis][1]}</span></label><div><input id={axis} type="number" inputMode="decimal" step="any" min={unit === 'cm' ? .01 : .1} max={unit === 'cm' ? 1000 : 10000} value={draft[axis]} onChange={e => {
+                setDraft({ ...draft, [axis]: e.target.value });
+                if (readings) {
+                  setReviewedAxes(current => ({ ...current, [axis]: e.target.value.trim() ? 'edited' : undefined }));
+                  setError('');
+                }
+              }} aria-invalid={!!error && !parsed} aria-describedby={error ? 'input-error' : undefined} /><span>{unit}</span></div>{readings && <small className="image-reading">
+                {reviewedAxes[axis] === 'edited' ? (readings[axis].mm === null ? '직접 입력함' : '사용자 수정') :
+                  reviewedAxes[axis] === 'confirmed' ? '확인함' : needsAxisReview(axis) ? '확인 필요' :
+                    readings[axis].mm === null ? '직접 입력' : '이미지에서 읽음'}
                 {readings[axis].evidence && <span>{readings[axis].evidence}</span>}
+                {needsAxisReview(axis) &&
+                  <button className="confirm-axis" type="button" aria-label={`${axisLabels[axis][0]} 치수 확인`} onClick={() => {
+                    setReviewedAxes(current => ({ ...current, [axis]: 'confirmed' }));
+                    setError('');
+                  }}>이 값 확인</button>}
               </small>}</div>)}</div>
+              {readings && <div className="axis-swap">
+                <select aria-label="교환할 치수 축" value={swapAxes} onChange={event => setSwapAxes(event.target.value)}>
+                  <option value="width-depth">가로 ↔ 깊이</option>
+                  <option value="width-height">가로 ↔ 높이</option>
+                  <option value="depth-height">깊이 ↔ 높이</option>
+                </select>
+                <button type="button" onClick={exchangeImageAxes}>축 교환</button>
+              </div>}
               <div className="dimension-guide"><svg viewBox="0 0 100 70" width="83" height="63" fill="none"><path d="m25 24 32-12 25 16-32 13-25-17v24l25 17 32-13V28M50 41v24" stroke="#b5bfce" strokeWidth="1.4" /><path d="m23 54 23 15M85 32v22M54 69l28-12" stroke="#a7b9da" strokeWidth="1.2" /><text x="26" y="68" fill="#6380aa" fontSize="10">W</text><text x="89" y="47" fill="#6380aa" fontSize="10">H</text><text x="70" y="69" fill="#6380aa" fontSize="10">D</text></svg><p>상세 페이지의 치수를<br />그대로 입력해 주세요.</p></div>
               {error && <p id="input-error" className="input-error" role="alert">{error}</p>}
-              <button className="primary-button" type="submit"><Box size={17} />3D로 크기 비교하기<ArrowRight size={17} /></button>
-              <p className="input-caption">{dirty ? '입력 후 버튼을 눌러 크기를 반영하세요' : '입력한 치수가 3D 공간에 반영되어 있어요'}</p>
+              <button className="primary-button" type="submit"><Box size={17} />{editing ? '치수 수정 적용' : '3D로 크기 비교하기'}<ArrowRight size={17} /></button>
+              {editing && <button type="button" className="edit-mode save-edited-model" onClick={() => saveEditedModel(editing)}>현재 치수를 새 모델로 저장</button>}
+              <p className="input-caption">{editing && !dirty ? '선택한 물건에 반영되어 있어요' : '확인한 치수를 공간에 반영할 수 있어요'}</p>
             </form>
           </section>
-          <section className="presets-panel"><div className="section-heading"><span className="step">02</span><h2>익숙한 물건과 비교</h2><span className="count-badge">{selected.length}</span></div><p className="section-description">함께 놓아볼 물건을 선택해 주세요.</p>
-            <div className="preset-grid">{availablePresets.map(preset => <button className={`preset-card ${selected.includes(preset.id) ? 'selected' : ''}`} key={preset.id} aria-pressed={selected.includes(preset.id)} onClick={() => setSelected(current => current.includes(preset.id) ? current.filter(id => id !== preset.id) : [...current, preset.id])}><span className="preset-check">{selected.includes(preset.id) && <Check size={11} strokeWidth={3} />}</span><PresetIcon id={preset.id} /><strong>{preset.name}</strong><small>{preset.id === 'a4' ? '210 × 297 mm' : preset.id === 'bottle' ? '높이 21 cm' : preset.id === 'phone' ? '6.1형 기준' : preset.id === 'laptop' ? '13형 · 닫힌 상태' : preset.id === 'keyboard' ? '텐키리스' : preset.id === 'monitor' ? '스탠드 포함' : '내 프리셋'}</small></button>)}</div>
+          <section className="presets-panel"><div className="section-heading"><span className="step">02</span><h2>익숙한 물건과 비교</h2><span className="count-badge">{instances.length}</span></div><p className="section-description">함께 놓아볼 물건을 추가해 주세요.</p>
+            <div className="preset-grid">{PRESETS.map(preset => {
+              const count = instances.filter(item => item.shape === preset.id).length;
+              return <button className="preset-card" key={preset.id} aria-label={`${preset.name} 공간에 추가`} onClick={() => setInstances(current => addInstance(current, preset, preset.id, preset.id))}>
+                <PresetIcon id={preset.id} /><strong>{preset.name}</strong><small>{count ? `공간에 ${count}개 · 추가` : '공간에 추가'}</small>
+              </button>;
+            })}</div>
             <div className="preset-notice"><Info size={14} /><span>프리셋은 대표 치수예요.<br />실제 제품에 따라 크기가 다를 수 있어요.</span></div>
           </section>
         </aside>
-        <div className="comparison-column"><SceneViewer product={product} presets={presets} unit={unit} resetKey={resetKey} />
-          <section className="comparison-details"><div className="details-heading"><h2><span className="blue-dot" />지금 비교 중인 물건</h2><button onClick={reset}><RotateCcw size={13} />초기화</button></div>
-            <div className="object-list">{product && <div className="object-row"><span className="object-icon is-product"><Box size={19} /></span><div className="object-name"><strong title={product.name}>{product.name}</strong><small>내 제품</small></div><span className="object-dimensions">{dimensionText(product, unit)}</span><button className="remove-object" aria-label="내 모델 공간에서 빼기" onClick={() => setProduct(null)}><X size={14} /></button></div>}{presets.map(preset => <div className="object-row" key={preset.id}><span className="object-icon"><PresetIcon id={preset.id} size={20} /></span><div className="object-name"><strong>{preset.name}</strong><small>{preset.detail}</small></div><span className="object-dimensions">{dimensionText(preset, unit)}</span><button className="remove-object" aria-label={`${preset.name} 비교에서 제거`} onClick={() => setSelected(current => current.filter(id => id !== preset.id))}><X size={14} /></button></div>)}</div>
-            {presets.length === 0 && <p className="empty-selection"><ArrowDown size={15} />비교할 물건을 선택하면 같은 공간에 나타나요.</p>}
+        <div className="comparison-column"><SceneViewer instances={instances} unit={unit} resetKey={resetKey} selectedId={selectedId} onSelect={setSelectedId} onPoseCommit={commitPose} onResetOne={resetOne} initialCamera={initial.camera} onCamera={recordCamera}
+            preferences={preferences} onPreferences={(patch: Partial<Preferences>) => setPreferences(current => ({ ...current, ...patch }))}
+            onReset={() => { setInstances(resetLayout); setResetKey(value => value + 1); }} />
+          <section className="comparison-details"><div className="details-heading"><h2><span className="blue-dot" />지금 비교 중인 물건</h2><div className="scene-history-actions">
+              <button disabled={!history.past.length} onClick={() => setHistory(current => stepScene(current, 'undo'))}><Undo2 size={13} />실행 취소</button>
+              <button disabled={!history.future.length} onClick={() => setHistory(current => stepScene(current, 'redo'))}><Redo2 size={13} />다시 실행</button>
+              <button onClick={reset}><RotateCcw size={13} />초기화</button></div></div>
+            {storageFailed && <p role="alert" className="input-error">이번 배치를 브라우저에 저장하지 못했어요.</p>}
+            <div className="object-list">{instances.map(item => <div className="object-row" key={item.id}>
+              <button className="object-icon" aria-label={`${item.snapshot.name} 선택`} aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)}><PresetIcon id={item.shape ?? 'custom-box'} size={19} /></button>
+              <div className="object-name"><strong title={item.snapshot.name}>{item.snapshot.name}</strong><small>{item.shape ? '기본 프리셋' : '내 제품'}</small></div>
+              <span className="object-dimensions">{dimensionText(item.snapshot, unit)}</span>
+              <button className="remove-object" onClick={() => editInstance(item)}>치수 수정</button>
+              <button className="remove-object" aria-label={`${item.snapshot.name} 복제`} onClick={() => setInstances(current => addInstance(current, item.snapshot, item.assetId, item.shape))}><Copy size={14} /></button>
+              <button className="remove-object" aria-label={`${item.snapshot.name} 공간에서 제거`} onClick={() => {
+                if (editingId === item.id) resetInput();
+                if (selectedId === item.id) setSelectedId(null);
+                setInstances(current => current.filter(other => other.id !== item.id));
+              }}><X size={14} /></button>
+            </div>)}</div>
+            {!instances.length && <p className="empty-selection"><ArrowDown size={15} />비교할 물건을 공간에 추가해 주세요.</p>}
             <p className="dimension-order">치수 순서: 가로(W) × 깊이(D) × 높이(H)</p>
           </section>
           <ModelLibrary models={library} unit={unit} onOpen={openModel} onRename={renameModel} onChange={changeLibrary} />

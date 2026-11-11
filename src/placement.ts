@@ -1,20 +1,26 @@
 import { Box3, Vector3 } from 'three';
 
 const axes = ['x', 'y', 'z'] as const;
-const tolerance = 0.0000001;
+const tolerance = 1e-7;
+type Axis = typeof axes[number];
 
-function overlaps(a: Box3, b: Box3) {
+export function overlaps(a: Box3, b: Box3) {
   return axes.every(axis =>
     a.min[axis] < b.max[axis] - tolerance &&
     a.max[axis] > b.min[axis] + tolerance,
   );
 }
 
-export function findPlacementOffset(moving: Box3, targets: Box3[], snapDistance: number): Vector3 | null {
+export type Placement =
+  | { kind: 'free' | 'blocked' }
+  | { kind: 'contact'; offset: Vector3; target: Box3; axis: Axis; side: 'min' | 'max' };
+
+export function resolvePlacement(moving: Box3, targets: Box3[], snapDistance: number): Placement {
   const intersecting = targets.some(target => overlaps(moving, target));
-  let best: Vector3 | null = null;
+  let best: Extract<Placement, { kind: 'contact' }> | null = null;
 
   for (const target of targets) {
+    if (intersecting && !overlaps(moving, target)) continue;
     for (const axis of axes) {
       const otherAxesOverlap = axes.filter(otherAxis => otherAxis !== axis).every(otherAxis =>
         moving.min[otherAxis] < target.max[otherAxis] - tolerance &&
@@ -22,22 +28,20 @@ export function findPlacementOffset(moving: Box3, targets: Box3[], snapDistance:
       );
       if (!otherAxesOverlap) continue;
 
-      for (const distance of [
-        target.min[axis] - moving.max[axis],
-        target.max[axis] - moving.min[axis],
-      ]) {
-        // Always resolve above a surface, never through its underside.
-        if (axis === 'y' && distance < 0) continue;
-        if (!intersecting && Math.abs(distance) > snapDistance) continue;
-        if (Math.abs(distance) < tolerance || (best && Math.abs(distance) >= best.length())) continue;
+      for (const side of ['min', 'max'] as const) {
+        if (axis === 'y' && side === 'min') continue;
+        const distance = side === 'min' ? target.min[axis] - moving.max[axis] : target.max[axis] - moving.min[axis];
+        if (!intersecting && (snapDistance <= 0 || Math.abs(distance) > snapDistance)) continue;
+        if (best && Math.abs(distance) >= best.offset.length()) continue;
 
         const offset = new Vector3();
         offset[axis] = distance;
         const moved = moving.clone().translate(offset);
-        if (targets.some(other => overlaps(moved, other))) continue;
-        best = offset;
+        if (moved.min.y < -tolerance || targets.some(other => overlaps(moved, other))) continue;
+        best = { kind: 'contact', offset, target, axis, side };
       }
     }
   }
-  return best;
+  if (best) return best;
+  return { kind: intersecting ? 'blocked' : 'free' };
 }

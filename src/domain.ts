@@ -38,7 +38,7 @@ export function sceneLayout(product: Product | null, presets: Preset[]) {
     return { object, x: x * WORLD_SCALE };
   });
 }
-function isProduct(value: unknown): value is ActiveProduct {
+export function isProduct(value: unknown): value is ActiveProduct {
   if (!value || typeof value !== 'object') return false;
   const product = value as Partial<Product>;
   return typeof product.name === 'string' && product.name.trim() !== '' && product.name.length <= 60 &&

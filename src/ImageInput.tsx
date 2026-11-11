@@ -11,6 +11,8 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
   const [error, setError] = useState('');
   const [candidates, setCandidates] = useState<SizeCandidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const dialog = useRef<HTMLDialogElement>(null);
   const request = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -22,6 +24,8 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
   useEffect(() => () => request.current?.abort(), []);
 
   function chooseFile(next?: File) {
+    dialog.current?.close();
+    setZoom(1);
     request.current?.abort();
     setPending(false);
     setExample(false);
@@ -70,15 +74,38 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
     }
   }
 
-  return <section className="image-input" aria-label="이미지에서 치수 가져오기">
+  const source = example ? import.meta.env.BASE_URL + 'measurement-example.png' : preview;
+  return <section className="image-input" aria-label="이미지에서 치수 가져오기" onPaste={event => {
+    const pasted = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/'));
+    if (pasted) { event.preventDefault(); chooseFile(pasted); }
+  }}>
     <label className="field-label" htmlFor="measurement-image">이미지에서 치수 가져오기</label>
     <input id="measurement-image" type="file" accept={imageTypes.join(',')} onChange={event => {
       chooseFile(event.target.files?.[0]);
       event.target.value = '';
     }} />
-    {(example || (file && preview)) && <img src={example ? import.meta.env.BASE_URL + 'measurement-example.png' : preview} alt="치수를 확인할 원본 도면" />}
+    <div className="image-paste" tabIndex={0}>캡처를 붙여넣을 수 있어요</div>
+    {source && <>
+      <button className="image-preview-button" type="button" onClick={() => { setZoom(1); dialog.current?.showModal(); }}>
+        <img src={source} alt="치수를 확인할 원본 도면" />
+        <span>원본 확대</span>
+      </button>
+      <dialog ref={dialog} className="image-review-dialog" aria-label="원본 도면 확대">
+        <div className="image-review-toolbar">
+          <button type="button" disabled={zoom <= 1} onClick={() => setZoom(value => value - .5)} aria-label="원본 축소">−</button>
+          <output>{zoom * 100}%</output>
+          <button type="button" disabled={zoom >= 3} onClick={() => setZoom(value => value + .5)} aria-label="원본 더 확대">+</button>
+          <button type="button" onClick={() => dialog.current?.close()}>닫기</button>
+        </div>
+        <div className="image-review-viewport"><img src={source} alt="확대한 원본 도면" style={{ width: `${zoom * 100}%` }} /></div>
+      </dialog>
+    </>}
     <div className="image-input-actions">
       {file && <button type="button" disabled={pending} onClick={analyze}>{pending ? '분석 중…' : '이미지 분석'}</button>}
+      {pending && <button type="button" onClick={() => {
+        request.current?.abort();
+        setPending(false);
+      }}>분석 취소</button>}
       <button type="button" onClick={() => {
         chooseFile();
         setExample(true);
@@ -88,7 +115,7 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
     {candidates.length > 1 && <fieldset className="size-candidates">
       <legend>비교할 크기 한 개를 선택하세요</legend>
       {candidates.map((candidate, index) => <label key={index}>
-        <input type="checkbox" checked={selectedCandidate === index} onChange={() => {
+        <input type="radio" name="size-candidate" checked={selectedCandidate === index} onChange={() => {
           setSelectedCandidate(index);
           onRead(candidate.dimensions);
         }} />
