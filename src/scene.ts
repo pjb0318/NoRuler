@@ -1,11 +1,22 @@
 import * as THREE from 'three';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { WORLD_SCALE, sceneLayout, displayValue } from './domain.ts';
+import { findPlacementOffset } from './placement.ts';
 import type { Dimensions, Preset, Product, Unit } from './domain.ts';
 
-export type View = 'perspective' | 'front' | 'top';
-export type MoveState = { moved: boolean; dragging: boolean };
+const viewDirections = {
+  perspective: new THREE.Vector3(1, .85, 1.5).normalize(),
+  front: new THREE.Vector3(0, 0, 1),
+  right: new THREE.Vector3(1, 0, 0),
+  back: new THREE.Vector3(0, 0, -1),
+  left: new THREE.Vector3(-1, 0, 0),
+  top: new THREE.Vector3(0, 1, 0),
+};
+export type View = keyof typeof viewDirections;
+export type TransformMode = 'translate' | 'rotate';
+export type MoveState = { moved: boolean; dragging: boolean; selected: string | null };
 const s = WORLD_SCALE;
 function box(parent: THREE.Object3D, w: number, h: number, d: number, x: number, y: number, z: number, color: string, metalness = 0) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness }));
@@ -100,6 +111,10 @@ export class ComparisonScene {
   private renderer: THREE.WebGLRenderer;
   private labels = new CSS2DRenderer();
   private controls: OrbitControls;
+  private transform = new TransformControls(this.camera);
+  private pivot = new THREE.Object3D();
+  private outline = new THREE.Box3Helper(new THREE.Box3(), '#6b98ed');
+  private pivotHeight = 0;
   private content = new THREE.Group();
   private grid = new THREE.Group();
   private floor: THREE.Mesh;
@@ -109,24 +124,22 @@ export class ComparisonScene {
   private bounds = new THREE.Box3();
   private layoutKey = '';
   private target = new THREE.Vector3();
-  private view: View = 'perspective';
+  private view: View | null = 'perspective';
   private onContextLost: (event: Event) => void;
-  private productModel: THREE.Group | null = null;
-  private productPosition: THREE.Vector3 | null = null;
-  private productHomeX = 0;
+  private models = new Map<string, THREE.Group>();
+  private poses = new Map<string, { position: THREE.Vector3; yaw: number }>();
+  private selectedId: string | null = null;
+  private selectedName: string | null = null;
+  private pendingSnapId: string | null = null;
+  private pointerStart: { id: number; x: number; y: number; target: string | null } | null = null;
   private pickableMeshes: THREE.Mesh[] = [];
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
-  private dragPlane = new THREE.Plane();
-  private dragStart = new THREE.Vector3();
-  private dragOrigin = new THREE.Vector3();
   private dragPointer: number | null = null;
-  private lastDragPointerEvent: PointerEvent | null = null;
-  private handingOffTouch = false;
   private onMoveStateChange: (state: MoveState) => void;
 
   private host: HTMLDivElement;
-  constructor(host: HTMLDivElement, onError: () => void, onMoveStateChange: (state: MoveState) => void = () => {}) {
+  constructor(host: HTMLDivElement, onError: () => void, onMoveStateChange: (state: MoveState) => void, onViewChange: (view: View | null) => void) {
     this.host = host;
     this.onMoveStateChange = onMoveStateChange;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -141,14 +154,28 @@ export class ComparisonScene {
     this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost);
     this.labels.domElement.className = 'scene-labels';
     host.append(this.renderer.domElement, this.labels.domElement);
+    this.camera.position.copy(viewDirections.perspective).multiplyScalar(12);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.maxPolarAngle = Math.PI / 2 - .015;
+    this.controls.maxPolarAngle = Math.PI / 2;
     this.controls.minZoom = .15;
     this.controls.maxZoom = 12;
     this.controls.listenToKeyEvents(this.renderer.domElement);
-    // Capture object gestures before OrbitControls receives them. Empty-space
-    // gestures and right-click/modified drags continue to control the camera.
+    this.controls.addEventListener('change', () => {
+      const direction = this.camera.position.clone().sub(this.controls.target).normalize();
+      const view = (Object.keys(viewDirections) as View[]).find(key => direction.dot(viewDirections[key]) > 1 - 1e-8) ?? null;
+      if (this.view === view) return;
+      this.view = view;
+      onViewChange(view);
+    });
+    this.pivot.rotation.order = 'YXZ';
+    this.transform.setSpace('world');
+    this.transform.setSize(.85);
+    this.transform.addEventListener('objectChange', this.onTransformChange);
+    this.outline.visible = false;
+    this.scene.add(this.pivot, this.outline, this.transform.getHelper());
+
+    // Route handle gestures before OrbitControls receives them.
     const canvas = this.renderer.domElement;
     canvas.addEventListener('pointerdown', this.onPointerDown, true);
     canvas.addEventListener('pointermove', this.onPointerMove, true);
@@ -156,7 +183,7 @@ export class ComparisonScene {
     canvas.addEventListener('pointercancel', this.onPointerEnd, true);
     canvas.addEventListener('lostpointercapture', this.onPointerEnd, true);
     canvas.addEventListener('pointerleave', this.onPointerLeave);
-    window.addEventListener('blur', this.finishDrag);
+    window.addEventListener('blur', this.onBlur);
     this.scene.add(new THREE.HemisphereLight('#ffffff', '#b6bfd0', 2.7));
     const key = new THREE.DirectionalLight('#fff9ef', 3.2);
     key.position.set(-8, 16, 10);
@@ -181,136 +208,233 @@ export class ComparisonScene {
     };
     animate();
   }
-  private updateRay(event: PointerEvent) {
+  private updatePointer(event: PointerEvent) {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+  }
+  private hitObject(): string | null {
     this.camera.updateMatrixWorld();
     this.content.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.pointer, this.camera);
-  }
-  private hitProduct() {
-    // Test the nearest visible mesh, so a preset in front cannot be grabbed through.
     const hit = this.raycaster.intersectObjects(this.pickableMeshes, false)[0];
-    return hit?.object.parent === this.productModel ? hit : null;
+    if (!hit) return null;
+    for (const [id, model] of this.models) {
+      if (model === hit.object || model.getObjectById(hit.object.id)) return id;
+    }
+    return null;
+  }
+  private selectObject(id: string | null) {
+    this.selectedId = id;
+    const model = id ? this.models.get(id) : undefined;
+    this.selectedName = model?.name ?? null;
+    this.outline.visible = !!model;
+    if (model) {
+      const bounds = this.meshBounds(model);
+      this.pivotHeight = bounds.getSize(new THREE.Vector3()).y / 2;
+      this.pivot.position.copy(model.position);
+      this.pivot.position.y += this.pivotHeight;
+      this.pivot.rotation.y = model.rotation.y;
+      this.transform.minY = this.pivotHeight;
+      this.transform.attach(this.pivot);
+      this.outline.box.copy(bounds);
+    } else {
+      this.transform.detach();
+    }
+    this.reportMoveState();
   }
   private reportMoveState() {
-    this.onMoveStateChange({ moved: this.productPosition !== null, dragging: this.dragPointer !== null });
+    this.onMoveStateChange({
+      moved: this.poses.size > 0,
+      dragging: this.dragPointer !== null,
+      selected: this.selectedName,
+    });
+  }
+  // Three.js takes normalized device coordinates here, despite its PointerEvent type.
+  private transformPointer(button: number) {
+    return { x: this.pointer.x, y: this.pointer.y, button } as PointerEvent;
   }
   private onPointerDown = (event: PointerEvent) => {
-    if (this.handingOffTouch) return;
     if (this.dragPointer !== null) {
-      if (event.pointerType === 'touch' && event.pointerId !== this.dragPointer && this.lastDragPointerEvent?.pointerType === 'touch') {
-        const first = this.lastDragPointerEvent;
-        this.finishDrag();
-        // A second finger changes an object drag into a normal camera gesture.
-        // Seed OrbitControls with the still-active first pointer before letting
-        // this second pointer reach its regular listener.
-        this.handingOffTouch = true;
-        try {
-          this.renderer.domElement.dispatchEvent(new PointerEvent('pointerdown', {
-            bubbles: true, pointerId: first.pointerId, pointerType: 'touch', isPrimary: true,
-            clientX: first.clientX, clientY: first.clientY, button: 0, buttons: 1,
-          }));
-        } finally { this.handingOffTouch = false; }
+      event.stopImmediatePropagation();
+      return;
+    }
+    if (!event.isPrimary || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) {
+      this.pointerStart = null;
+      return;
+    }
+    this.updatePointer(event);
+    const pointer = this.transformPointer(0);
+    this.transform.getHelper().updateMatrixWorld(true);
+    this.transform.pointerHover(pointer);
+    if (this.transform.axis) {
+      this.transform.getHelper().updateMatrixWorld(true);
+      this.transform.pointerDown(pointer);
+      if (this.transform.dragging) {
+        this.dragPointer = event.pointerId;
+        this.controls.enabled = false;
+        this.renderer.domElement.setPointerCapture(event.pointerId);
+        this.renderer.domElement.style.cursor = 'grabbing';
+        this.reportMoveState();
+        event.preventDefault();
+        event.stopImmediatePropagation();
         return;
       }
-      event.stopImmediatePropagation(); event.preventDefault(); return;
     }
-    if (!event.isPrimary || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || !this.productModel) return;
-    this.updateRay(event);
-    if (!this.hitProduct()) return;
-    // Settle residual orbit damping before calculating the grab point.
-    const damping = this.controls.enableDamping;
-    this.controls.enableDamping = false;
-    this.controls.update();
-    this.controls.enableDamping = damping;
-    this.updateRay(event);
-    const hit = this.hitProduct();
-    if (!hit) return;
-    const normal = Math.abs(this.raycaster.ray.direction.y) < .15
-      ? this.camera.getWorldDirection(new THREE.Vector3())
-      : new THREE.Vector3(0, 1, 0);
-    // Near a front view, a camera-facing plane avoids an unstable near-parallel
-    // floor intersection. Ignoring Y keeps the box grounded (left/right motion).
-    this.dragPlane.setFromNormalAndCoplanarPoint(normal, hit.point);
-    this.dragStart.copy(hit.point);
-    this.dragOrigin.copy(this.productModel.position);
-    this.dragPointer = event.pointerId;
-    this.lastDragPointerEvent = event;
-    this.controls.enabled = false;
-    this.renderer.domElement.setPointerCapture(event.pointerId);
-    this.renderer.domElement.style.cursor = 'grabbing';
-    this.reportMoveState();
-    event.preventDefault();
-    event.stopImmediatePropagation();
+    this.pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY, target: this.hitObject() };
   };
   private onPointerMove = (event: PointerEvent) => {
     if (this.dragPointer !== null) {
-      event.preventDefault();
+      if (event.pointerId === this.dragPointer) {
+        this.updatePointer(event);
+        this.transform.pointerMove(this.transformPointer(-1));
+      }
       event.stopImmediatePropagation();
-      if (event.pointerId !== this.dragPointer || !this.productModel) return;
-      this.lastDragPointerEvent = event;
-      this.updateRay(event);
-      const point = this.raycaster.ray.intersectPlane(this.dragPlane, new THREE.Vector3());
-      if (!point) return;
-      const position = point.sub(this.dragStart).add(this.dragOrigin);
-      position.y = 0;
-      if (!Number.isFinite(position.x) || !Number.isFinite(position.z) || position.distanceTo(this.productModel.position) < .000001) return;
-      const firstMove = this.productPosition === null;
-      this.productPosition = position;
-      this.productModel.position.copy(position);
-      if (firstMove) this.reportMoveState();
-    } else if (event.pointerType !== 'touch' && event.buttons === 0) {
-      this.updateRay(event);
-      this.renderer.domElement.style.cursor = this.hitProduct() ? 'grab' : '';
+      return;
+    }
+    const start = this.pointerStart;
+    if (start?.id === event.pointerId && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
+      this.pointerStart = null;
+    }
+    if (event.pointerType !== 'touch' && event.buttons === 0) {
+      this.updatePointer(event);
+      this.transform.pointerHover(this.transformPointer(-1));
+      this.renderer.domElement.style.cursor = this.transform.axis ? 'grab' : this.hitObject() ? 'pointer' : '';
     }
   };
   private onPointerEnd = (event: PointerEvent) => {
-    if (event.pointerId !== this.dragPointer) return;
-    event.stopImmediatePropagation();
-    this.finishDrag();
+    if (event.pointerId === this.dragPointer) {
+      event.stopImmediatePropagation();
+      this.finishDrag();
+      return;
+    }
+    const start = this.pointerStart;
+    if (start?.id !== event.pointerId) return;
+    this.pointerStart = null;
+    if (event.type === 'pointerup' && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
+      this.selectObject(start.target);
+    }
   };
   private onPointerLeave = () => {
-    if (this.dragPointer === null) this.renderer.domElement.style.cursor = '';
+    if (this.dragPointer !== null) return;
+    this.transform.axis = null;
+    this.renderer.domElement.style.cursor = '';
+  };
+  private onBlur = () => {
+    this.pointerStart = null;
+    this.finishDrag();
+  };
+  private onTransformChange = () => {
+    const id = this.selectedId;
+    const model = id ? this.models.get(id) : undefined;
+    if (!id || !model) return;
+    const height = Math.max(0, this.pivot.position.y - this.pivotHeight);
+    model.position.set(this.pivot.position.x, height, this.pivot.position.z);
+    model.rotation.y = this.pivot.rotation.y;
+    this.outline.box.copy(this.meshBounds(model));
+    this.pendingSnapId = id;
   };
   private finishDrag = () => {
     if (this.dragPointer === null) return;
     const pointerId = this.dragPointer;
     this.dragPointer = null;
-    this.lastDragPointerEvent = null;
+    this.transform.pointerUp(null);
     const canvas = this.renderer.domElement;
     if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
     this.controls.enabled = true;
     canvas.style.cursor = '';
+
+    const id = this.pendingSnapId;
+    const model = id ? this.models.get(id) : undefined;
+    if (id && model) {
+      if (this.transform.mode === 'rotate') {
+        const quarterTurn = Math.PI / 2;
+        const nearest = Math.round(model.rotation.y / quarterTurn) * quarterTurn;
+        if (Math.abs(model.rotation.y - nearest) < THREE.MathUtils.degToRad(8)) model.rotation.y = nearest;
+      }
+      this.snapMovedObject();
+      this.poses.set(id, { position: model.position.clone(), yaw: model.rotation.y });
+      this.selectObject(id);
+    } else {
+      this.reportMoveState();
+    }
     this.measureBounds();
     this.rebuildGrid();
-    this.reportMoveState();
   };
+  setTransformMode(mode: TransformMode) {
+    this.finishDrag();
+    this.transform.axis = null;
+    this.transform.setMode(mode);
+    this.transform.showX = mode === 'translate';
+    this.transform.showZ = mode === 'translate';
+  }
+  private meshBounds(model: THREE.Group) {
+    // Exclude labels and dimension lines from contact and selection bounds.
+    model.updateWorldMatrix(true, true);
+    const bounds = new THREE.Box3();
+    model.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
+      if (object.geometry.boundingBox) {
+        bounds.union(object.geometry.boundingBox.clone().applyMatrix4(object.matrixWorld));
+      }
+    });
+    return bounds;
+  }
+  private snapMovedObject() {
+    const id = this.pendingSnapId;
+    this.pendingSnapId = null;
+    const moving = id ? this.models.get(id) : null;
+    if (!id || !moving) return;
+
+    const movingBounds = this.meshBounds(moving);
+    if (movingBounds.isEmpty()) return;
+    const targets = [...this.models]
+      .filter(([otherId]) => otherId !== id)
+      .map(([, model]) => this.meshBounds(model))
+      .filter(bounds => !bounds.isEmpty());
+    const offset = findPlacementOffset(movingBounds, targets, 20 * WORLD_SCALE);
+    if (!offset) return;
+    moving.position.add(offset);
+  }
+  clearSelection() { this.finishDrag(); this.selectObject(null); }
   resetProductPosition() {
     this.finishDrag();
-    this.productPosition = null;
-    this.productModel?.position.set(this.productHomeX, 0, 0);
-    this.reportMoveState();
+    this.poses.clear();
+    this.selectObject(null);
+    this.layoutKey = '';
+    for (const model of this.models.values()) {
+      const home = model.userData.home as THREE.Vector3;
+      model.position.copy(home);
+      model.rotation.y = 0;
+    }
     this.fit();
   }
-  update(product: Product, presets: Preset[], unit: Unit, showDimensions: boolean, showGrid: boolean) {
+  update(product: Product | null, presets: Preset[], unit: Unit, showDimensions: boolean, showGrid: boolean) {
     this.finishDrag();
     disposeGroup(this.content);
     this.pickableMeshes = [];
+    this.models.clear();
+    this.pointerStart = null;
     const layout = sceneLayout(product, presets);
     for (const [index, item] of layout.entries()) {
-      const model = createModel(item.object, index ? presets[index - 1] : undefined);
+      const isProduct = product !== null && index === 0;
+      const preset = isProduct ? undefined : presets[index - (product ? 1 : 0)];
+      const model = createModel(item.object, preset?.id.startsWith('custom-') ? undefined : preset);
       model.position.x = item.x;
-      if (index === 0) {
-        this.productHomeX = item.x;
-        this.productModel = model;
-        if (this.productPosition) model.position.copy(this.productPosition);
+      const id = preset?.id ?? 'product';
+      model.name = item.object.name;
+      model.userData.home = model.position.clone();
+      const pose = this.poses.get(id);
+      if (pose) {
+        model.position.copy(pose.position);
+        model.rotation.y = pose.yaw;
       }
+      this.models.set(id, model);
       model.traverse(object => { if (object instanceof THREE.Mesh) this.pickableMeshes.push(object); });
       const h = item.object.height * s;
-      model.add(label(item.object.name, index ? 'object-label' : 'object-label product-label', new THREE.Vector3(0, h + .34, 0)));
+      model.add(label(item.object.name, isProduct ? 'object-label product-label' : 'object-label', new THREE.Vector3(0, h + .34, 0)));
       this.content.add(model);
-      if (index === 0 && showDimensions) {
+      if (isProduct && showDimensions) {
         const w = product.width * s, d = product.depth * s;
         const offset = Math.max(.25, Math.max(w, d, h) * .09);
         dimension(model, new THREE.Vector3(-w / 2, .025, d / 2 + offset), new THREE.Vector3(w / 2, .025, d / 2 + offset), `W ${displayValue(product.width, unit)} ${unit}`, 'w');
@@ -318,15 +442,20 @@ export class ComparisonScene {
         dimension(model, new THREE.Vector3(-w / 2 - offset, 0, d / 2), new THREE.Vector3(-w / 2 - offset, h, d / 2), `H ${displayValue(product.height, unit)} ${unit}`, 'h');
       }
     }
+    for (const id of this.poses.keys()) {
+      if (!this.models.has(id)) this.poses.delete(id);
+    }
+    if (this.selectedId && !this.models.has(this.selectedId)) this.selectObject(null);
+    else if (this.selectedId) this.selectObject(this.selectedId);
     this.measureBounds();
     this.rebuildGrid();
     this.grid.visible = showGrid;
-    const key = JSON.stringify([product.width, product.depth, product.height, presets.map(p => p.id)]);
+    const key = JSON.stringify([product?.width, product?.depth, product?.height, presets.map(p => p.id)]);
     if (key !== this.layoutKey) { this.layoutKey = key; this.fit(); }
   }
   private measureBounds() {
-    if (!this.content.children.length) return;
     const bounds = new THREE.Box3().setFromObject(this.content);
+    if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-1, 0, -1), new THREE.Vector3(1, 1, 1));
     const size = bounds.getSize(new THREE.Vector3());
     this.bounds.copy(bounds).expandByScalar(.3);
     this.target.copy(bounds.getCenter(new THREE.Vector3()));
@@ -362,22 +491,30 @@ export class ComparisonScene {
     this.camera.updateProjectionMatrix();
   }
   fit() {
+    this.finishDrag();
     this.measureBounds();
     this.rebuildGrid();
     this.camera.zoom = 1;
+    const direction = this.camera.position.clone().sub(this.controls.target).normalize();
     this.controls.target.copy(this.target);
-    this.setView(this.view);
+    this.camera.position.copy(this.target).addScaledVector(direction, this.radius * 4 + 10);
+    this.controls.update();
     this.resizeViewport();
   }
   setView(view: View) {
     this.finishDrag();
-    this.measureBounds();
-    this.view = view;
-    this.controls.target.copy(this.target);
-    const direction = view === 'front' ? new THREE.Vector3(0, .001, 1) : view === 'top' ? new THREE.Vector3(0, 1, .001) : new THREE.Vector3(1, .85, 1.5);
-    this.camera.position.copy(this.controls.target).add(direction.normalize().multiplyScalar(this.radius * 4 + 10));
+    const target = this.controls.target.clone();
+    const distance = this.camera.position.distanceTo(target);
+    const zoom = this.camera.zoom;
+    const damping = this.controls.enableDamping;
+    this.controls.enableDamping = false;
+    this.controls.update(); // Flush residual orbit and pan before reorienting.
+    this.controls.target.copy(target);
+    this.camera.zoom = zoom;
+    this.camera.position.copy(target).addScaledVector(viewDirections[view], distance);
     this.controls.update();
-    this.resizeViewport();
+    this.camera.updateProjectionMatrix();
+    this.controls.enableDamping = damping;
   }
   zoom(factor: number) {
     this.camera.zoom = THREE.MathUtils.clamp(this.camera.zoom * factor, .15, 12);
@@ -395,7 +532,11 @@ export class ComparisonScene {
     canvas.removeEventListener('pointercancel', this.onPointerEnd, true);
     canvas.removeEventListener('lostpointercapture', this.onPointerEnd, true);
     canvas.removeEventListener('pointerleave', this.onPointerLeave);
-    window.removeEventListener('blur', this.finishDrag);
+    window.removeEventListener('blur', this.onBlur);
+    this.transform.getHelper().removeFromParent();
+    this.transform.getHelper().dispose();
+    this.outline.removeFromParent();
+    this.outline.dispose();
     disposeGroup(this.scene);
     this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
     this.renderer.dispose();

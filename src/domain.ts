@@ -1,7 +1,9 @@
 export type Unit = 'mm' | 'cm';
 export type Dimensions = { width: number; depth: number; height: number };
 export type Product = Dimensions & { name: string };
-export type PresetId = 'a4' | 'bottle' | 'phone' | 'laptop' | 'keyboard' | 'monitor';
+export type PresetId = 'a4' | 'bottle' | 'phone' | 'laptop' | 'keyboard' | 'monitor' | `custom-${string}`;
+export type SavedModel = Product & { id: `custom-${string}`; history: boolean; preset: boolean };
+export type ActiveProduct = Product & { id?: SavedModel["id"] };
 export type Preset = Dimensions & { id: PresetId; name: string; detail: string; color: string };
 
 // Canonical dimensions are millimetres. All geometry uses WORLD_SCALE uniformly.
@@ -24,8 +26,9 @@ export function parseDimensions(values: Record<keyof Dimensions, string>, unit: 
   const dims = Object.fromEntries(AXES.map(axis => [axis, Number(values[axis]) * factor])) as Dimensions;
   return AXES.every(axis => values[axis].trim() !== '' && Number.isFinite(dims[axis]) && dims[axis] >= 0.1 && dims[axis] <= 10000) ? dims : null;
 }
-export function sceneLayout(product: Product, presets: Preset[]) {
-  const objects = [product, ...presets];
+export function sceneLayout(product: Product | null, presets: Preset[]) {
+  const objects = product ? [product, ...presets] : presets;
+  if (!objects.length) return [];
   const gap = Math.max(35, Math.min(120, Math.max(...objects.map(o => o.width)) * 0.18));
   const totalWidth = objects.reduce((sum, o) => sum + o.width, 0) + gap * (objects.length - 1);
   let left = -totalWidth / 2;
@@ -35,11 +38,36 @@ export function sceneLayout(product: Product, presets: Preset[]) {
     return { object, x: x * WORLD_SCALE };
   });
 }
-export function readSaved(): { product: Product; selected: PresetId[]; unit: Unit } {
-  const fallback = { product: DEFAULT_PRODUCT, selected: ['bottle', 'phone'] as PresetId[], unit: 'cm' as Unit };
+function isProduct(value: unknown): value is ActiveProduct {
+  if (!value || typeof value !== 'object') return false;
+  const product = value as Partial<Product>;
+  return typeof product.name === 'string' && product.name.trim() !== '' && product.name.length <= 60 &&
+    AXES.every(axis => {
+      const size = product[axis];
+      return typeof size === 'number' && size >= 0.1 && size <= 10000;
+    });
+}
+
+export function readSaved(): { product: ActiveProduct | null; selected: PresetId[]; unit: Unit; library: SavedModel[] } {
+  const fallback = { product: DEFAULT_PRODUCT, selected: ['bottle', 'phone'] as PresetId[], unit: 'cm' as Unit, library: [] };
   try {
     const value = JSON.parse(localStorage.getItem('noruler-v1') || 'null');
-    if (!value || typeof value.product?.name !== 'string' || value.product.name.length > 60 || !AXES.every(axis => typeof value.product[axis] === 'number' && Number.isFinite(value.product[axis]) && value.product[axis] >= 0.1 && value.product[axis] <= 10000)) return fallback;
-    return { product: value.product, unit: value.unit === 'mm' ? 'mm' : 'cm', selected: Array.isArray(value.selected) ? [...new Set(value.selected.filter((id: PresetId) => PRESETS.some(p => p.id === id)))] as PresetId[] : fallback.selected };
+    if (!value) return fallback;
+    const library: SavedModel[] = Array.isArray(value.library) ? value.library.filter((item: SavedModel) =>
+      isProduct(item) && typeof item.id === 'string' && item.id.startsWith('custom-') &&
+      (item.history === true || item.preset === true),
+    ) : [];
+    let product = value.product === null ? null : isProduct(value.product) ? value.product : fallback.product;
+    if (!Array.isArray(value.library) && product &&
+        (product.name !== DEFAULT_PRODUCT.name || AXES.some(axis => product?.[axis] !== DEFAULT_PRODUCT[axis]))) {
+      const previous: SavedModel = { ...product, id: 'custom-legacy', history: true, preset: false };
+      library.push(previous);
+      product = previous;
+    }
+    const allowed = [...PRESETS, ...library.filter(item => item.preset)].map(item => item.id);
+    const selected = Array.isArray(value.selected)
+      ? [...new Set<PresetId>(value.selected.filter((id: PresetId) => allowed.includes(id)))]
+      : fallback.selected;
+    return { product, library, selected, unit: value.unit === 'mm' ? 'mm' : 'cm' };
   } catch { return fallback; }
 }

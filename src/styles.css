@@ -8,3 +8,42 @@
 .object-move-bar{position:absolute;top:99px;left:22px;display:flex;align-items:center;gap:12px;font-size:9px;color:#6582ad}.object-move-bar>span{display:flex;align-items:center;gap:6px;pointer-events:none}.object-move-bar button{display:flex;align-items:center;gap:4px;padding:5px 7px;border:1px solid #d8e3f3;border-radius:5px;background:#ffffffdb;color:#6382b3;font-size:9px}.object-move-bar button:disabled{opacity:.4;cursor:default;transform:none}.is-moving-product .product-label{border-color:#6b98ed;box-shadow:0 0 0 3px #729aef20;background:#edf4ff}.is-moving-product .object-move-bar>span{color:#2a64ce}.object-move-bar>span{user-select:none}
 @media(max-width:480px){.object-move-bar{left:16px;right:16px;top:85px;justify-content:space-between;gap:6px;font-size:8px}.object-move-bar button{font-size:8px;padding:5px}.object-move-bar>span{gap:4px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+
+.image-input{display:grid;gap:8px;margin-bottom:18px;padding:12px;border:1px solid #e1e8f0;border-radius:10px;background:#f7f9fc}
+.image-input input{min-width:0;width:100%;font-size:11px}
+.image-input img{display:block;width:100%;max-height:160px;object-fit:contain;border-radius:5px;background:white}
+.image-input-actions{display:flex;flex-wrap:wrap;gap:6px}
+.image-input-actions button{border:1px solid #cbd8e9;border-radius:6px;padding:5px 8px;color:#254977;background:white;font-size:11px;cursor:pointer}
+.image-input-actions button:disabled{opacity:.6;cursor:wait}
+.image-input p{margin:0;font-size:11px;line-height:1.5}
+.image-reading{display:block;color:#315a8a;font-size:10px;line-height:1.45;margin-top:5px;overflow-wrap:anywhere}
+.image-reading span{display:block;color:#586679}
+
+.size-candidates{display:grid;gap:6px;min-width:0;margin:2px 0;padding:0;border:0}
+.size-candidates legend{margin-bottom:7px;color:#304c70;font-size:11px;font-weight:700}
+.size-candidates label{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid #d9e3ef;border-radius:6px;background:#fff;cursor:pointer}
+.size-candidates input{width:auto;margin:2px 0 0;flex:none}
+.size-candidates label span{display:grid;gap:3px;min-width:0;font-size:11px}
+.size-candidates small{font-size:10px;color:#586679;line-height:1.5;overflow-wrap:anywhere}
+
+.move-controls{position:absolute;right:52px;bottom:58px;z-index:4;padding:8px;border:1px solid #d7e2f1;border-radius:14px;background:#ffffffee;box-shadow:0 6px 20px #273e5c20}
+.move-controls-header{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 3px 5px;color:#536b8f;font-size:10px}
+.move-controls-header span{max-width:105px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.move-controls-header button{font-size:18px;line-height:1;color:#6a7d99}
+@media(max-width:480px){.move-controls{right:42px;bottom:55px}}
+
+.viewer.hide-object-names .object-label{visibility:hidden}
+
+.model-library{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:15px}
+.model-library>section{min-width:0;padding:16px;background:white;border:1px solid #e2e7ee;border-radius:12px}
+.model-library h2{font-size:13px;margin-bottom:8px}
+.model-library p,.model-library small{font-size:11px;color:#62748b}
+.model-library article{display:grid;gap:6px;border-top:1px solid #eef1f5;padding:10px 0;overflow-wrap:anywhere}
+.library-actions,.model-library form{display:flex;flex-wrap:wrap;gap:5px}
+.model-library button{padding:5px 8px;border:1px solid #d8e3f3;border-radius:5px;color:#416cae;font-size:11px}
+.model-library input{width:100%;min-width:0;padding:5px;border:1px solid #d8e3f3;border-radius:5px}
+.object-transform-modes{display:flex;gap:4px}
+.object-transform-modes button{display:flex;align-items:center;gap:4px;min-height:36px;padding:4px 9px;border-radius:5px;color:#586e8c;font-size:11px}
+.object-transform-modes button[aria-pressed=true]{color:#285baf;background:#eaf2ff}
+.view-switch button{min-height:32px}
+@media(max-width:480px){.view-switch button{padding-inline:6px;min-height:30px}.view-switch{right:auto;max-width:calc(100% - 32px)}}
