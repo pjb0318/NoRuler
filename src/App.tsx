@@ -6,8 +6,8 @@ import ImageInput from './ImageInput';
 import type { ImageChoice } from './ImageInput';
 import DeskPreview from './DeskPreview';
 import { deskPreviewDimensions, makeDeskShape } from './deskModel';
-import { supportsDesk } from './imageDimensions';
-import type { ImageDimensions } from './imageDimensions';
+import { measurementSourceLabel, reconcileMeasurements, supportsDesk } from './imageDimensions';
+import type { ImageDimensions, Measurement } from './imageDimensions';
 import { AXES, DEFAULT_PRODUCT, PRESETS, dimensionText, displayValue, formatNumber, parseDimensions } from './domain';
 import type { Dimensions, PresetId, SavedModel, Unit } from './domain';
 import { addInstance, changeScene, initialInstances, placeInstance, resetLayout, stepScene, updateSceneMetadata } from './workspace';
@@ -148,7 +148,7 @@ export default function App() {
       setFrontFlipped(previous.frontFlipped);
       return;
     }
-    if (next.subject && supportsDesk(next.subject.shapeEvidence)) {
+    if (next.subject) {
       const label = next.candidate.label;
       const subject = next.subject.label;
       setName((subject === label ? subject : `${subject} · ${label}`).slice(0, 60));
@@ -161,6 +161,28 @@ export default function App() {
     ])) as Record<keyof Dimensions, string>);
     setStatus('선택한 상품의 치수를 원본과 비교해 확인해 주세요.');
   }
+  function applyMeasurements(measurements: Measurement[]) {
+    if (!choice || !readings) return;
+    const merged = reconcileMeasurements(choice.candidate.dimensions, measurements);
+    setReadings(merged);
+    setDraft(current => {
+      const updated = { ...current };
+      for (const axis of AXES) {
+        if (reviewedAxes[axis] && current[axis].trim()) continue;
+        const mm = merged[axis].mm;
+        updated[axis] = mm === null ? '' : displayValue(mm, unit);
+      }
+      return updated;
+    });
+    setError('');
+  }
+
+  function chooseMeasurement(axis: keyof Dimensions, mm: number) {
+    setDraft(current => ({ ...current, [axis]: displayValue(mm, unit) }));
+    setReviewedAxes(current => ({ ...current, [axis]: 'confirmed' }));
+    setError('');
+  }
+
   function exchangeImageAxes() {
     if (!readings) return;
     const [a, b] = swapAxes.split('-') as [keyof Dimensions, keyof Dimensions];
@@ -290,7 +312,7 @@ export default function App() {
         <aside className="sidebar">
           <section className="product-panel">
             <div className="section-heading"><span className="step">01</span><h2>어떤 제품인가요?</h2><Box size={18} /></div>
-            {editing ? <button className="edit-mode" onClick={resetInput}>치수 수정 닫기</button> : <ImageInput key={`${resetKey}-${imageKey}`} onRead={useImageChoice} review={deskShape
+            {editing ? <button className="edit-mode" onClick={resetInput}>치수 수정 닫기</button> : <ImageInput key={`${resetKey}-${imageKey}`} onRead={useImageChoice} onMeasurements={applyMeasurements} review={deskShape
               ? <DeskPreview dimensions={previewDimensions} shape={deskShape} complete={reviewedDimensions} view={evidence?.view} unseen={evidence?.unseen}
                   onFlip={() => setFrontFlipped(value => !value)} />
               : null} />}
@@ -307,7 +329,7 @@ export default function App() {
               }} aria-invalid={!!error && !parsed} aria-describedby={error ? 'input-error' : undefined} /><span>{unit}</span></div>{readings && <small className="image-reading">
                 {reviewedAxes[axis] === 'edited' ? (readings[axis].mm === null ? '직접 입력함' : '사용자 수정') :
                   reviewedAxes[axis] === 'confirmed' ? '확인함' : needsAxisReview(axis) ? '확인 필요' :
-                    readings[axis].mm === null ? '직접 입력' : '이미지에서 읽음'}
+                    readings[axis].mm === null ? (readings[axis].measurements?.length ? '값 충돌 · 출처 확인' : '직접 입력') : '자료에서 읽음'}
                 {readings[axis].evidence && <span>{readings[axis].evidence}</span>}
                 {needsAxisReview(axis) &&
                   <button className="confirm-axis" type="button" aria-label={`${axisLabels[axis][0]} 치수 확인`} onClick={() => {
@@ -315,6 +337,25 @@ export default function App() {
                     setError('');
                   }}>이 값 확인</button>}
               </small>}</div>)}</div>
+              {readings && AXES.some(axis => readings[axis].measurements?.length) &&
+                <details className="measurement-evidence" open={AXES.some(axis =>
+                  readings[axis].mm === null && !!readings[axis].measurements?.length && !reviewedAxes[axis]) || undefined}>
+                  <summary>치수 출처 확인</summary>
+                  {AXES.map(axis => {
+                    const measurements = readings[axis].measurements;
+                    if (!measurements?.length) return null;
+                    const conflict = new Set(measurements.map(item => item.mm)).size > 1;
+                    return <div key={axis}>
+                      <strong>{axisLabels[axis][0]}{conflict && ' · 값 충돌'}</strong>
+                      <ul>{measurements.map(item => <li key={item.id}>
+                        {measurementSourceLabel(item)} · {item.location || '치수 표기'} · {item.quote}
+                        {conflict && <button type="button" className="confirm-axis" onClick={() => chooseMeasurement(axis, item.mm)}>
+                          {displayValue(item.mm, unit)} {unit} 사용
+                        </button>}
+                      </li>)}</ul>
+                    </div>;
+                  })}
+                </details>}
               {deskShape && <p className="input-caption">비교 공간에서는 책상의 전체 외곽을 기준으로 배치해요.</p>}
               {clearance?.mm != null && <p className="input-caption">하부 여유 높이 약 {displayValue(clearance.mm, unit)} {unit}</p>}
               {evidence?.readiness === 'needs_view' && <p className="input-caption">

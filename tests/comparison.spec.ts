@@ -273,3 +273,104 @@ test('keeps the desk shape through placement, duplication, edits, undo and reloa
   expect(shapes).toHaveLength(3);
   expect(shapes.every((shape: { frontFlipped: boolean }) => shape.frontFlipped)).toBe(true);
 });
+
+const measurement = (id: string, axis: string | null, mm: number, sourceId = 'photo', location = '치수선', scope = 'overall') =>
+  ({ id, axis, mm, sourceId, location, scope, quote: `${mm} mm` });
+
+test('reviews the product region and both sources in a composite image', async ({ page }) => {
+  const size = [measurement('arrow', 'width', 500), measurement('table', 'width', 500, 'photo', '사양표 크기 행')];
+  await page.route('**/api/image-dimensions', route => route.fulfill({ json: {
+    subjects: [{ id: 'stand', label: '모니터 받침대', shapeEvidence: {
+      readiness: 'ready', kind: 'other', parts: [], region: { left: .1, top: .2, right: .8, bottom: .7 },
+    } }],
+    candidates: [{ id: 'stand-1', subjectId: 'stand', label: '기본형',
+      dimensions: { width: { ...imageReading(500), measurements: size }, depth: imageReading(200), height: imageReading(82) },
+      measurements: size,
+    }],
+  } }));
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  await expect(page.getByLabel('제품명', { exact: true })).toHaveValue('모니터 받침대 · 기본형');
+  await expect(page.locator('#height')).toHaveValue('82');
+  await page.getByText('치수 출처 확인').click();
+  await expect(page.getByText('상품 사진 · 치수선 · 500 mm')).toBeVisible();
+  await expect(page.getByText('상품 사진 · 사양표 크기 행 · 500 mm')).toBeVisible();
+  await page.getByRole('button', { name: /원본 확대/ }).click();
+  const outline = page.getByLabel('선택한 상품 영역');
+  await expect(outline).toBeVisible();
+  const originalStyle = await outline.getAttribute('style');
+  await page.getByRole('button', { name: '상품 영역 다시 지정' }).click();
+  const image = await page.getByAltText('확대한 상품 사진').boundingBox();
+  if (!image) throw new Error('Product image not visible');
+  await page.mouse.move(image.x + image.width * .2, image.y + image.height * .3);
+  await page.mouse.down();
+  await page.mouse.move(image.x + image.width * .7, image.y + image.height * .6);
+  await page.mouse.up();
+  await expect(outline).not.toHaveAttribute('style', originalStyle!);
+});
+
+test('adds late specifications without resetting the draft and reviews conflicts', async ({ page }) => {
+  const rows = [
+    { id: 'wrong', label: '다른 모델', modelCode: 'B', optionCode: '', measurements: [measurement('w', 'width', 1000, 'spec-text')] },
+    { id: 'package', label: '포장', modelCode: 'A', optionCode: '', measurements: [measurement('p', 'width', 1000, 'spec-text', '포장 치수', 'package')] },
+    { id: 'match', label: '본체', modelCode: 'A', optionCode: '800', measurements: [
+      measurement('w2', 'width', 805, 'spec-text'), measurement('h2', 'height', 750, 'spec-text'), measurement('d2', null, 510, 'spec-text'),
+    ] },
+  ];
+  let requestCount = 0;
+  await page.route('**/api/image-dimensions', route => {
+    if (++requestCount === 1) return route.fulfill({ json: {
+      subjects: [{ ...deskSubject, modelCode: 'A' }],
+      candidates: [{ ...deskOptions[0], optionCode: '800', measurements: [measurement('w1', 'width', 800), measurement('h1', 'height', 740)],
+        dimensions: { width: imageReading(800), height: imageReading(740), depth: imageReading(null) } }],
+    } });
+    expect(route.request().postData()).toContain('name="spec-text"');
+    expect(route.request().postData()).not.toContain('name="photo"');
+    return route.fulfill({ json: { subjects: [], candidates: [], specRows: rows } });
+  });
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  await expect(page.locator('#width')).toHaveValue('800');
+  await page.locator('#width').fill('810');
+  await page.getByRole('button', { name: '앞뒤 바꾸기' }).click();
+  await page.getByText('별도 치수 자료 추가').click();
+  await page.getByLabel('치수 또는 사양 텍스트').fill('모델 A / 800');
+  await page.getByRole('button', { name: '추가 사양 분석' }).click();
+  await page.getByRole('radio', { name: /^다른 모델/ }).check();
+  await expect(page.getByText('모델 번호 또는 옵션이 달라 연결할 수 없어요.')).toBeVisible();
+  await page.getByRole('radio', { name: /^포장/ }).check();
+  await expect(page.getByRole('button', { name: '선택한 사양 적용' })).toBeDisabled();
+  await page.getByRole('radio', { name: /^본체 · 연결 후보/ }).check();
+  await page.getByLabel(/510 mm · 입력한 사양/).selectOption('depth');
+  await page.getByRole('button', { name: '선택한 사양 적용' }).click();
+  await expect(page.locator('#width')).toHaveValue('810');
+  await expect(page.locator('#depth')).toHaveValue('510');
+  await expect(page.locator('#height')).toHaveValue('');
+  await expect(page.getByRole('button', { name: '책상을 비교 공간에 추가' })).toBeDisabled();
+  await page.getByRole('button', { name: '750 mm 사용' }).click();
+  await expect(page.locator('#height')).toHaveValue('750');
+  await expect(page.getByRole('button', { name: '앞뒤 바꾸기' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: '책상을 비교 공간에 추가' })).toBeEnabled();
+});
+
+test('sends a photo and separate specification capture together in initial analysis', async ({ page }) => {
+  await page.route('**/api/image-dimensions', route => {
+    expect(route.request().headers()['content-type']).toMatch(/^multipart\/form-data/);
+    expect(route.request().postData()).toContain('name="photo"');
+    expect(route.request().postData()).toContain('name="spec-image"');
+    return route.fulfill({ json: { subjects: [deskSubject], candidates: [deskOptions[0]], specRows: [{
+      id: 'table', label: '책상 사양표', modelCode: '', optionCode: '',
+      measurements: [measurement('t1', 'width', 800, 'spec-image', '크기 행')],
+    }] } });
+  });
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByText('별도 치수 자료 추가').click();
+  await page.locator('#spec-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  await page.getByRole('radio', { name: /^책상 사양표/ }).check();
+  await page.getByRole('button', { name: '선택한 사양 적용' }).click();
+  await expect(page.locator('#width')).toHaveValue('800');
+});

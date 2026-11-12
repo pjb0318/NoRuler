@@ -103,3 +103,49 @@
 .desk-preview-actions button { border: 1px solid #cbd8e9; border-radius: 6px; background: white; }
 .desk-preview-actions button[aria-pressed=true] { background: #e7efff; color: #2356af; }
 .primary-button:disabled { cursor: not-allowed; opacity: .55; }
+
+.spec-input, .measurement-evidence {
+  border: 1px solid #dbe4ef;
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 11px;
+  color: #435875;
+}
+.spec-input[open], .measurement-evidence[open] { display: grid; gap: 6px; }
+.spec-input summary, .measurement-evidence summary { cursor: pointer; }
+.spec-input textarea, .measurement-review select {
+  width: 100%;
+  padding: 5px;
+  border: 1px solid #cbd8e9;
+  border-radius: 5px;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+.spec-input textarea { resize: vertical; }
+.spec-input button:not(.image-preview-button), .measurement-review button, .product-region-tools button {
+  justify-self: start;
+  padding: 4px 6px;
+  border: 1px solid #cbd8e9;
+  border-radius: 5px;
+  background: white;
+  color: #255998;
+  font-size: 11px;
+}
+.measurement-review, .measurement-review label, .measurement-evidence li { display: grid; gap: 4px; }
+.measurement-review { color: #435875; font-size: 11px; }
+.measurement-review button:disabled, .spec-input button:disabled { opacity: .55; }
+.measurement-evidence { margin-top: 10px; }
+.measurement-evidence ul { margin: 4px 0; padding-inline-start: 12px; }
+.measurement-evidence li { margin-block: 5px; }
+.measurement-evidence li button { justify-self: start; }
+.product-region-tools { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.product-region { position: relative; }
+.product-region img { width: 100%; }
+.product-region.is-drawing { cursor: crosshair; touch-action: none; }
+.product-region-outline {
+  position: absolute;
+  border: 2px solid #2864e8;
+  box-shadow: 0 0 0 1px white;
+  pointer-events: none;
+}
