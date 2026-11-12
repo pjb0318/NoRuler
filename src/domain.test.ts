@@ -201,3 +201,30 @@ test('restores desk shape in a v3 workspace and preserves the previous v2 worksp
     else Reflect.deleteProperty(globalThis, 'localStorage');
   }
 });
+
+test('keeps provenance, resolves matching unlabeled triples and rejects conflicting or non-product sizes', () => {
+  const measure = (axis: string | null, mm: number, location: string, scope = 'overall', sourceId = 'photo') =>
+    ({ sourceId, axis, mm, quote: `${mm} mm`, location, scope, basis: 'dimension_line' });
+  const analyze = (measurements: unknown[]) => normalizeImageAnalysis({
+    subjects: [{ label: '모니터 받침대', options: [{ measurements }] }],
+    specRows: [
+      { label: '포장 크기', measurements: [measure('width', 900, '포장', 'package', 'spec-image')] },
+      { label: '받침대', measurements: [measure('width', 500, 'Overall size: 50 x 20 x 8.2 cm', 'overall', 'spec-image')] },
+    ],
+  }, ['photo', 'spec-image']);
+  const arrows = [measure('width', 500, '사진 치수선'), measure('depth', 200, '사진 치수선'), measure('height', 82, '사진 치수선')];
+  const table = [500, 200, 82].map(mm => measure(null, mm, '사양표'));
+  const combined = analyze([...arrows, ...table, measure('height', 90, '포장', 'package'), measure('width', 700, '다른 자료', 'overall', 'unknown')]);
+  const dimensions = combined.candidates[0].dimensions;
+  assert.deepEqual(AXES.map(axis => dimensions[axis].mm), [500, 200, 82]);
+  assert.equal(dimensions.width.measurements?.length, 2);
+  assert.equal(dimensions.height.measurements?.length, 2);
+  assert.equal(combined.specRows?.[0].measurements[0].scope, 'package');
+  assert.equal(combined.specRows?.[1].measurements[0].axis, null);
+
+  const conflicting = analyze([...arrows, measure('height', 90, '별도 표기')]);
+  assert.equal(conflicting.candidates[0].dimensions.height.mm, null);
+  assert.equal(conflicting.candidates[0].dimensions.height.needsReview, true);
+  assert.deepEqual(conflicting.candidates[0].dimensions.height.measurements?.map(item => item.mm), [82, 90]);
+  assert.equal(analyze(table).candidates[0].dimensions.width.mm, null);
+});
