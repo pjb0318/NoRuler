@@ -90,3 +90,16 @@
   .pose-actions{max-width:none}
 }
 @media(max-width:600px){.pose-form input{font-size:16px;width:68px}}
+
+.image-shape-review { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 8px; }
+.image-shape-review .image-preview-button { margin: 0; }
+.desk-preview { min-width: 0; display: grid; gap: 4px; color: #314258; }
+.desk-preview strong { font-size: 13px; }
+.desk-preview small { font-size: 11px; }
+.desk-preview-canvas { height: 132px; min-width: 0; overflow: hidden; border: 1px solid #dbe3ed; border-radius: 8px; }
+.desk-preview-canvas canvas { display: block; touch-action: none; }
+.desk-preview-actions { display: flex; flex-wrap: wrap; gap: 3px; }
+.desk-preview-actions button { padding: 4px 5px; font-size: 11px; }
+.desk-preview-actions button { border: 1px solid #cbd8e9; border-radius: 6px; background: white; }
+.desk-preview-actions button[aria-pressed=true] { background: #e7efff; color: #2356af; }
+.primary-button:disabled { cursor: not-allowed; opacity: .55; }

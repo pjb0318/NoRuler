@@ -3,6 +3,10 @@ import { ArrowDown, ArrowRight, Box, Copy, ChevronDown, CircleHelp, File, Info, 
 import SceneViewer from './SceneViewer';
 import ModelLibrary from './ModelLibrary';
 import ImageInput from './ImageInput';
+import type { ImageChoice } from './ImageInput';
+import DeskPreview from './DeskPreview';
+import { deskPreviewDimensions, makeDeskShape } from './deskModel';
+import { supportsDesk } from './imageDimensions';
 import type { ImageDimensions } from './imageDimensions';
 import { AXES, DEFAULT_PRODUCT, PRESETS, dimensionText, displayValue, formatNumber, parseDimensions } from './domain';
 import type { Dimensions, PresetId, SavedModel, Unit } from './domain';
@@ -18,6 +22,15 @@ function PresetIcon({ id, size = 26 }: { id: PresetId; size?: number }) {
   return <Icon size={size} strokeWidth={1.45} />;
 }
 const axisLabels = { width: ['가로', 'Width', 'W'], depth: ['깊이', 'Depth', 'D'], height: ['높이', 'Height', 'H'] };
+type AxisReview = Partial<Record<keyof Dimensions, 'confirmed' | 'edited' | 'pending'>>;
+type OptionDraft = {
+  draft: Record<keyof Dimensions, string>;
+  unit: Unit;
+  readings: ImageDimensions;
+  reviewedAxes: AxisReview;
+  frontFlipped: boolean;
+};
+
 const makeDraft = (d: Dimensions, unit: Unit) => Object.fromEntries(AXES.map(axis => [axis, displayValue(d[axis], unit)])) as Record<keyof Dimensions, string>;
 
 export default function App() {
@@ -44,13 +57,26 @@ export default function App() {
   const [resetKey, setResetKey] = useState(0);
   const [imageKey, setImageKey] = useState(0);
   const [readings, setReadings] = useState<ImageDimensions | null>(null);
-  const [reviewedAxes, setReviewedAxes] = useState<Partial<Record<keyof Dimensions, 'confirmed' | 'edited' | 'pending'>>>({});
+  const [reviewedAxes, setReviewedAxes] = useState<AxisReview>({});
+  const [choice, setChoice] = useState<ImageChoice | null>(null);
+  const optionDrafts = useRef(new Map<string, OptionDraft>());
+  const [frontFlipped, setFrontFlipped] = useState(false);
   const [swapAxes, setSwapAxes] = useState('width-depth');
   const parsed = parseDimensions(draft, unit);
   const needsAxisReview = (axis: keyof Dimensions) => !!readings && (
     reviewedAxes[axis] === 'pending' && draft[axis].trim() !== '' ||
     !reviewedAxes[axis] && readings[axis].mm !== null && readings[axis].needsReview
   );
+  const evidence = choice?.subject?.shapeEvidence;
+  const clearance = choice?.candidate.clearance;
+  const deskShape = supportsDesk(evidence) && readings
+    ? { ...makeDeskShape(clearance?.mm, choice?.candidate.dimensions.height.mm ?? null), frontFlipped }
+    : undefined;
+  const reviewedDimensions = !!parsed && !AXES.some(needsAxisReview);
+  const previewDimensions = Object.fromEntries(AXES.map(axis => {
+    const mm = Number(draft[axis]) * (unit === 'cm' ? 10 : 1);
+    return [axis, mm >= .1 && mm <= 10000 ? mm : deskPreviewDimensions[axis]];
+  })) as Dimensions;
   const dirty = !editing || name.trim() !== editing.snapshot.name || !parsed || AXES.some(axis => parsed[axis] !== editing.snapshot[axis]);
   function save() {
     window.clearTimeout(pendingSave.current);
@@ -99,26 +125,34 @@ export default function App() {
     window.addEventListener('keydown', close);
     return () => { window.removeEventListener('keydown', close); document.querySelector<HTMLButtonElement>('.help-button')?.focus(); };
   }, [help]);
-  function useImageDimensions(result: ImageDimensions | null) {
+  function useImageChoice(next: ImageChoice | null, reset = false) {
+    if (reset) optionDrafts.current.clear();
+    else if (choice && readings) optionDrafts.current.set(choice.id, { draft, unit, readings, reviewedAxes, frontFlipped });
+    setChoice(next);
     setReviewedAxes({});
-    setReadings(result);
+    setFrontFlipped(false);
     setError('');
-    if (!result) {
-      if (readings) setDraft(current => {
-        const next = { ...current };
-        for (const axis of AXES) {
-          if (readings[axis].mm !== null && reviewedAxes[axis] !== 'edited') next[axis] = '';
-        }
-        return next;
-      });
+    if (!next) {
+      setReadings(null);
+      if (choice) setDraft({ width: '', depth: '', height: '' });
       return;
     }
+    const previous = optionDrafts.current.get(next.id);
+    if (previous) {
+      setDraft(previous.draft);
+      setUnit(previous.unit);
+      setReadings(previous.readings);
+      setReviewedAxes(previous.reviewedAxes);
+      setFrontFlipped(previous.frontFlipped);
+      return;
+    }
+    const result = next.candidate.dimensions;
+    setReadings(result);
     setUnit('mm');
     setDraft(Object.fromEntries(AXES.map(axis => [
       axis, result[axis].mm === null ? '' : displayValue(result[axis].mm, 'mm'),
     ])) as Record<keyof Dimensions, string>);
-    setError('');
-    setStatus('이미지의 치수 후보를 입력했어요. 원본과 비교해 확인해 주세요.');
+    setStatus('선택한 상품의 치수를 원본과 비교해 확인해 주세요.');
   }
   function exchangeImageAxes() {
     if (!readings) return;
@@ -172,6 +206,9 @@ export default function App() {
     setEditingId(null);
     setImageKey(key => key + 1);
     setReadings(null);
+    setChoice(null);
+    optionDrafts.current.clear();
+    setFrontFlipped(false);
     setReviewedAxes({});
     setError('');
   }
@@ -242,7 +279,10 @@ export default function App() {
         <aside className="sidebar">
           <section className="product-panel">
             <div className="section-heading"><span className="step">01</span><h2>어떤 제품인가요?</h2><Box size={18} /></div>
-            {editing ? <button className="edit-mode" onClick={resetInput}>치수 수정 닫기</button> : <ImageInput key={`${resetKey}-${imageKey}`} onRead={useImageDimensions} />}
+            {editing ? <button className="edit-mode" onClick={resetInput}>치수 수정 닫기</button> : <ImageInput key={`${resetKey}-${imageKey}`} onRead={useImageChoice} review={deskShape
+              ? <DeskPreview dimensions={previewDimensions} shape={deskShape} complete={reviewedDimensions} view={evidence?.view} unseen={evidence?.unseen}
+                  onFlip={() => setFrontFlipped(value => !value)} />
+              : null} />}
             <form onSubmit={apply} noValidate>
               <label className="field-label" htmlFor="product-name">제품명</label>
               <input id="product-name" className="name-input" value={name} readOnly={!!editing} onChange={e => setName(e.target.value)} maxLength={60} placeholder="예: 사고 싶은 수납함" autoComplete="off" />
@@ -264,6 +304,11 @@ export default function App() {
                     setError('');
                   }}>이 값 확인</button>}
               </small>}</div>)}</div>
+              {clearance?.mm != null && <p className="input-caption">하부 여유 높이 약 {displayValue(clearance.mm, unit)} {unit}</p>}
+              {evidence?.readiness === 'needs_view' && <p className="input-caption">
+                {evidence.nextView ? `형태를 확인하려면 ${evidence.nextView} 사진이 필요해요.` : '형태를 확인하려면 다른 각도의 사진이 필요해요.'} 치수를 입력하면 상자로 비교할 수 있어요.
+              </p>}
+              {evidence?.readiness === 'ready' && !deskShape && <p className="input-caption">이 형태는 아직 3D 초안을 지원하지 않아요. 치수를 입력하면 상자로 비교할 수 있어요.</p>}
               {readings && <div className="axis-swap">
                 <select aria-label="교환할 치수 축" value={swapAxes} onChange={event => setSwapAxes(event.target.value)}>
                   <option value="width-depth">가로 ↔ 깊이</option>
@@ -274,7 +319,7 @@ export default function App() {
               </div>}
               <div className="dimension-guide"><svg viewBox="0 0 100 70" width="83" height="63" fill="none"><path d="m25 24 32-12 25 16-32 13-25-17v24l25 17 32-13V28M50 41v24" stroke="#b5bfce" strokeWidth="1.4" /><path d="m23 54 23 15M85 32v22M54 69l28-12" stroke="#a7b9da" strokeWidth="1.2" /><text x="26" y="68" fill="#6380aa" fontSize="10">W</text><text x="89" y="47" fill="#6380aa" fontSize="10">H</text><text x="70" y="69" fill="#6380aa" fontSize="10">D</text></svg><p>상세 페이지의 치수를<br />그대로 입력해 주세요.</p></div>
               {error && <p id="input-error" className="input-error" role="alert">{error}</p>}
-              <button className="primary-button" type="submit"><Box size={17} />{editing ? '치수 수정 적용' : '3D로 크기 비교하기'}<ArrowRight size={17} /></button>
+              <button className="primary-button" type="submit" disabled={!!deskShape && !reviewedDimensions}><Box size={17} />{editing ? '치수 수정 적용' : deskShape ? '상자로 크기 비교하기' : '3D로 크기 비교하기'}<ArrowRight size={17} /></button>
               {editing && <button type="button" className="edit-mode save-edited-model" onClick={() => saveEditedModel(editing)}>현재 치수를 새 모델로 저장</button>}
               <p className="input-caption">{editing && !dirty ? '선택한 물건에 반영되어 있어요' : '확인한 치수를 공간에 반영할 수 있어요'}</p>
             </form>

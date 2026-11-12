@@ -156,3 +156,88 @@ test('puts a monitor on a platform and preserves overlap correction with snappin
   await button('적용').click();
   await expect(height).toHaveValue('100');
 });
+
+const deskSubject = {
+  id: 'desk', label: '흰색 책상',
+  shapeEvidence: {
+    readiness: 'ready', kind: 'cross-braced-desk',
+    parts: ['tabletop', 'fourSquareLegs', 'sideStretchers', 'rearCrossBrace'],
+  },
+};
+const imageReading = (mm: number | null) => ({ mm, evidence: mm === null ? '' : '치수선', needsReview: mm === null });
+const deskOptions = [[800, 500], [1000, 600], [1200, 600]].map(([width, depth]) => ({
+  id: String(width), subjectId: 'desk', label: String(width),
+  dimensions: { width: imageReading(width), depth: imageReading(depth), height: imageReading(740) },
+  clearance: imageReading(700),
+}));
+
+test('shows a desk draft with missing measurements and keeps edits per option', async ({ page }) => {
+  await page.route('**/api/image-dimensions', route => route.fulfill({ json: {
+    subjects: [deskSubject], candidates: deskOptions.map(option => option.id === '800' ? {
+      ...option, dimensions: { width: imageReading(null), depth: imageReading(null), height: imageReading(null) },
+    } : option),
+  } }));
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  const choose = (option: number) => page.getByRole('radio', { name: new RegExp(`^${option} `) }).check();
+  await choose(800);
+  const preview = page.getByRole('region', { name: '책상 3D 초안' });
+  await expect(preview.locator('canvas')).toBeVisible();
+  await expect(preview).toContainText('치수 미확정');
+  await expect(page.locator('#width')).toHaveValue('');
+  await expect(page.locator('button[type=submit]')).toBeDisabled();
+  await page.locator('#width').fill('810');
+  await page.locator('#depth').fill('510');
+  await page.locator('#height').fill('740');
+  await preview.getByRole('button', { name: '앞뒤 바꾸기' }).click();
+  await expect(preview.getByRole('button', { name: '앞뒤 바꾸기' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('button[type=submit]')).toBeEnabled();
+  await choose(1000);
+  await expect(page.locator('#width')).toHaveValue('1000');
+  await expect(page.locator('#depth')).toHaveValue('600');
+  await choose(1200);
+  await expect(page.locator('#width')).toHaveValue('1200');
+  await choose(800);
+  await expect(page.locator('#width')).toHaveValue('810');
+  await expect(page.locator('#depth')).toHaveValue('510');
+  await expect(preview.getByRole('button', { name: '앞뒤 바꾸기' })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('keeps the manual comparison path available for unsupported image shapes and failed analysis', async ({ page }) => {
+  let attempt = 0;
+  await page.route('**/api/image-dimensions', route => ++attempt === 1
+    ? route.fulfill({ json: {
+        subjects: [{ ...deskSubject, shapeEvidence: { ...deskSubject.shapeEvidence, kind: 'other' } }],
+        candidates: [deskOptions[0]],
+      } })
+    : route.fulfill({ status: 502, json: { error: '분석 실패' } }));
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  const analyze = page.getByRole('button', { name: '이미지 분석' });
+  await analyze.click();
+  await expect(page.getByText('이 형태는 아직 3D 초안을 지원하지 않아요.', { exact: false })).toBeVisible();
+  await expect(page.locator('#width')).toHaveValue('800');
+  await analyze.click();
+  await expect(page.getByRole('alert')).toContainText('분석 실패');
+  await page.locator('#width').fill('800');
+  await page.locator('#depth').fill('500');
+  await page.locator('#height').fill('740');
+  await expect(page.getByRole('button', { name: '3D로 크기 비교하기' })).toBeEnabled();
+});
+
+test('cancels a pending image analysis without applying its late result', async ({ page }) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/image-dimensions', async route => {
+    await pending;
+    await route.fulfill({ json: { subjects: [deskSubject], candidates: [deskOptions[0]] } }).catch(() => {});
+  });
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  await page.getByRole('button', { name: '분석 취소' }).click();
+  release();
+  await expect(page.getByRole('button', { name: '이미지 분석' })).toBeEnabled();
+  await expect(page.getByRole('region', { name: '책상 3D 초안' })).toHaveCount(0);
+});

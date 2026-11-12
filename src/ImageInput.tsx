@@ -1,15 +1,21 @@
 /// <reference types="vite/client" />
 import { useEffect, useRef, useState } from 'react';
 import { exampleDimensions, imageSizeLimit, imageTypes } from './imageDimensions';
-import type { ImageDimensions, SizeCandidate } from './imageDimensions';
+import type { ReactNode } from 'react';
+import type { ImageAnalysis, ImageSubject, SizeCandidate } from './imageDimensions';
 
-export default function ImageInput({ onRead }: { onRead: (result: ImageDimensions | null) => void }) {
+export type ImageChoice = { id: string; candidate: SizeCandidate; subject?: ImageSubject };
+
+export default function ImageInput({ onRead, review }: { onRead: (result: ImageChoice | null, reset?: boolean) => void; review: ReactNode }) {
   const [file, setFile] = useState<File>();
   const [preview, setPreview] = useState('');
   const [example, setExample] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
-  const [candidates, setCandidates] = useState<SizeCandidate[]>([]);
+  const [analysis, setAnalysis] = useState<ImageAnalysis | null>(null);
+  const [subjectId, setSubjectId] = useState<string>();
+  const candidates = (analysis?.candidates ?? []).filter(candidate => candidate.subjectId === subjectId);
+  const subject = analysis?.subjects.find(item => item.id === subjectId);
   const [selectedCandidate, setSelectedCandidate] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -31,9 +37,10 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
     setExample(false);
     setFile(undefined);
     setError('');
-    setCandidates([]);
+    setAnalysis(null);
+    setSubjectId(undefined);
     setSelectedCandidate(null);
-    onRead(null);
+    onRead(null, true);
     if (!next) return;
     if (!imageTypes.includes(next.type) || next.size === 0 || next.size > imageSizeLimit) {
       setError('8 MB 이하의 PNG, JPG, WebP 이미지를 선택해 주세요.');
@@ -43,14 +50,15 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
   }
 
   async function analyze() {
-    if (!file) return;
+    if (!file || pending) return;
     const controller = new AbortController();
     request.current = controller;
     setPending(true);
     setError('');
-    setCandidates([]);
+    setAnalysis(null);
+    setSubjectId(undefined);
     setSelectedCandidate(null);
-    onRead(null);
+    onRead(null, true);
     try {
       const response = await fetch('/api/image-dimensions', {
         method: 'POST', body: file, signal: controller.signal,
@@ -59,18 +67,31 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
       if (!response.ok) throw new Error(result.error);
       if (!Array.isArray(result.candidates)) throw new Error('분석 결과를 읽지 못했어요. 다시 시도해 주세요.');
       if (!controller.signal.aborted) {
-        setCandidates(result.candidates);
-        if (result.candidates.length === 1) {
-          setSelectedCandidate(0);
-          onRead(result.candidates[0].dimensions);
-        } else if (result.candidates.length === 0) {
-          setError('크기 정보를 찾지 못했어요. 치수를 직접 입력해 주세요.');
-        }
+        const next: ImageAnalysis = { ...result, subjects: result.subjects ?? [] };
+        setAnalysis(next);
+        if (next.subjects.length <= 1) chooseSubject(next, next.subjects[0]?.id, true);
+        if (!next.candidates.length) setError('상품이나 치수 정보를 찾지 못했어요. 치수를 직접 입력해 주세요.');
       }
     } catch (error) {
       if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '이미지를 분석하지 못했어요.');
     } finally {
       if (!controller.signal.aborted) setPending(false);
+    }
+  }
+
+  function chooseOption(option: SizeCandidate, index: number, parent?: ImageSubject, reset = false) {
+    setSelectedCandidate(index);
+    onRead({ id: option.id ?? String(index), candidate: option, subject: parent }, reset);
+  }
+
+  function chooseSubject(result: ImageAnalysis, id?: string, reset = false) {
+    setSubjectId(id);
+    const options = result.candidates.filter(candidate => candidate.subjectId === id);
+    if (options.length === 1) {
+      chooseOption(options[0], 0, result.subjects.find(item => item.id === id), reset);
+    } else {
+      setSelectedCandidate(null);
+      onRead(null, reset);
     }
   }
 
@@ -86,10 +107,13 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
     }} />
     <div className="image-paste" tabIndex={0}>캡처를 붙여넣을 수 있어요</div>
     {source && <>
+      <div className={review ? "image-shape-review" : undefined}>
       <button className="image-preview-button" type="button" onClick={() => { setZoom(1); dialog.current?.showModal(); }}>
         <img src={source} alt="치수를 확인할 원본 도면" />
         <span>원본 확대</span>
       </button>
+      {review}
+      </div>
       <dialog ref={dialog} className="image-review-dialog" aria-label="원본 도면 확대">
         <div className="image-review-toolbar">
           <button type="button" disabled={zoom <= 1} onClick={() => setZoom(value => value - .5)} aria-label="원본 축소">−</button>
@@ -109,16 +133,20 @@ export default function ImageInput({ onRead }: { onRead: (result: ImageDimension
       <button type="button" onClick={() => {
         chooseFile();
         setExample(true);
-        onRead(exampleDimensions);
+        onRead({ id: 'example', candidate: { label: '예시 도면', dimensions: exampleDimensions } });
       }}>예시 도면 써보기</button>
     </div>
+    {analysis && analysis.subjects.length > 1 && <fieldset className="size-candidates">
+      <legend>어떤 상품을 비교할까요?</legend>
+      {analysis.subjects.map(item => <label key={item.id}>
+        <input type="radio" name="image-subject" checked={subjectId === item.id} onChange={() => chooseSubject(analysis, item.id)} />
+        <span>{item.label}</span>
+      </label>)}
+    </fieldset>}
     {candidates.length > 1 && <fieldset className="size-candidates">
       <legend>비교할 크기 한 개를 선택하세요</legend>
       {candidates.map((candidate, index) => <label key={index}>
-        <input type="radio" name="size-candidate" checked={selectedCandidate === index} onChange={() => {
-          setSelectedCandidate(index);
-          onRead(candidate.dimensions);
-        }} />
+        <input type="radio" name="size-candidate" checked={selectedCandidate === index} onChange={() => chooseOption(candidate, index, subject)} />
         <span><strong>{candidate.label}</strong><small>
           {(['width', 'depth', 'height'] as const).map((axis, i) =>
             `${['가로', '깊이', '높이'][i]} ${candidate.dimensions[axis].mm ?? '미확인'}`
