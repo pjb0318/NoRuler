@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Box3, Vector3 } from 'three';
 import { AXES, DEFAULT_PRODUCT, PRESETS, WORLD_SCALE, displayValue, parseDimensions, sceneLayout } from './domain.ts';
 import { createModel } from './scene.ts';
+import { makeDeskShape } from './deskModel.ts';
 import { deskParts, normalizeImageAnalysis, supportsDesk } from './imageDimensions.ts';
 import { resolvePlacement } from './placement.ts';
 import { addInstance, changeScene, initialInstances, stepScene } from './workspace.ts';
@@ -154,4 +155,49 @@ test('image analysis preserves shape readiness without dimensions and independen
     [[800, 500, 740], [1000, 600, 740], [1200, 600, 740]]);
   assert.equal(result.candidates[3].clearance?.mm, 700);
   assert.equal(result.candidates[3].subjectId, result.subjects[1].id);
+});
+
+test('desk geometry keeps exact exterior bounds and can flip the cross brace', () => {
+  for (const [width, depth] of [[800, 500], [1000, 600], [1200, 600]]) {
+    const deskShape = makeDeskShape(700, 740);
+    for (const frontFlipped of [false, true]) {
+      const desk = createModel({ width, depth, height: 740, deskShape: { ...deskShape, frontFlipped } });
+      const bounds = new Box3().setFromObject(desk, true);
+      const size = bounds.getSize(new Vector3()).multiplyScalar(1 / WORLD_SCALE);
+      assert.deepEqual(size.toArray().map(mm => Math.round(mm * 1000) / 1000), [width, 740, depth]);
+      assert.ok(Math.abs(bounds.min.y) < 1e-5);
+      const braces = desk.getObjectsByProperty('name', 'rear-cross-brace');
+      assert.equal(braces.length, 2);
+      assert.ok(braces.every(part => frontFlipped === (part.getWorldPosition(new Vector3()).z > 0)));
+    }
+  }
+});
+
+test('restores desk shape in a v3 workspace and preserves the previous v2 workspace', () => {
+  const values = new Map<string, string>();
+  const priorStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value) },
+  });
+  try {
+    const base = readWorkspace();
+    const legacy = JSON.stringify({ ...base, schemaVersion: 2 });
+    values.set('noruler-v2', legacy);
+    const migrated = readWorkspace();
+    assert.equal(migrated.schemaVersion, 3);
+    assert.equal(migrated.instances[1].shape, 'bottle');
+    const desk = { name: '책상', width: 800, depth: 500, height: 740,
+      deskShape: { ...makeDeskShape(700, 740), frontFlipped: true }, id: 'custom-desk',
+      history: true, preset: false } as const;
+    const instances = addInstance(addInstance(migrated.instances, desk, desk.id), desk, desk.id);
+    assert.notEqual(instances.at(-1)?.snapshot.deskShape, instances.at(-2)?.snapshot.deskShape);
+    const expected = { ...migrated, instances, library: [desk] };
+    writeWorkspace(expected);
+    assert.deepEqual(readWorkspace(), expected);
+    assert.equal(values.get('noruler-v2'), legacy);
+  } finally {
+    if (priorStorage) Object.defineProperty(globalThis, 'localStorage', priorStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
 });

@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { createDeskModel } from './deskModel.ts';
 import { WORLD_SCALE, PRESETS, displayValue } from './domain.ts';
 import type { CameraState } from './storage.ts';
 import type { Pose, SceneInstance } from './workspace.ts';
 import { resolvePlacement } from './placement.ts';
-import type { Dimensions, Preset, Unit } from './domain.ts';
+import type { Dimensions, Preset, Product, Unit } from './domain.ts';
 
 const viewDirections = {
   perspective: new THREE.Vector3(1, .85, 1.5).normalize(),
@@ -28,7 +29,8 @@ function box(parent: THREE.Object3D, w: number, h: number, d: number, x: number,
   parent.add(mesh);
   return mesh;
 }
-export function createModel(d: Dimensions, preset?: Preset): THREE.Group {
+export function createModel(d: Dimensions & Pick<Product, 'deskShape'>, preset?: Preset): THREE.Group {
+  if (d.deskShape) return createDeskModel(d, d.deskShape);
   const group = new THREE.Group();
   const w = d.width * s, h = d.height * s, depth = d.depth * s;
   if (!preset) {

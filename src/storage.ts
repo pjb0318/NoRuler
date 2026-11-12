@@ -1,12 +1,13 @@
 import { PRESETS, isProduct, readSaved } from './domain.ts';
-import type { SavedModel, Unit } from './domain.ts';
+import { readDeskShape } from './deskModel.ts';
+import type { Product, SavedModel, Unit } from './domain.ts';
 import { initialInstances } from './workspace.ts';
 import type { Position, SceneInstance } from './workspace.ts';
 
 export type CameraState = { positionMm: Position; targetMm: Position; zoom: number; halfHeight: number; aspect: number };
 export type Preferences = { names: boolean; dimensions: boolean; grid: boolean; snap: boolean };
 export type Workspace = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   instances: SceneInstance[];
   library: SavedModel[];
   camera: CameraState | null;
@@ -14,7 +15,7 @@ export type Workspace = {
   unit: Unit;
 };
 
-const key = 'noruler-v2';
+const key = 'noruler-v3';
 const preferences: Preferences = { names: true, dimensions: true, grid: true, snap: true };
 const isPosition = (p: Position | undefined) => p && [p.x, p.y, p.z].every(Number.isFinite);
 const isShape = (shape: string) => PRESETS.some(preset => preset.id === shape);
@@ -27,12 +28,19 @@ function validateCamera(camera: CameraState | null | undefined): CameraState | n
     Number.isFinite(camera.aspect) && camera.aspect > 0 ? camera : null;
 }
 
-export function readWorkspace(): Workspace {
+function restoreProduct<T extends Product>(value: T, hasDeskShapes: boolean): T {
+  const { deskShape, ...rest } = value;
+  const shape = hasDeskShapes ? readDeskShape(deskShape) : undefined;
+  return { ...rest, ...(shape ? { deskShape: shape } : {}) } as T;
+}
+
+function readVersion(storageKey: string, version: 2 | 3): Workspace | null {
   try {
-    const saved = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Workspace> | null;
-    if (saved?.schemaVersion === 2 && Array.isArray(saved.instances) && Array.isArray(saved.library)) {
+    const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as
+      (Omit<Partial<Workspace>, 'schemaVersion'> & { schemaVersion?: number }) | null;
+    if (saved?.schemaVersion === version && Array.isArray(saved.instances) && Array.isArray(saved.library)) {
       const library = saved.library.filter(item => isProduct(item) && typeof item.id === 'string' &&
-        item.id.startsWith('custom-') && (item.history === true || item.preset === true));
+        item.id.startsWith('custom-') && (item.history === true || item.preset === true)).map(item => restoreProduct(item, version === 3));
       const seen = new Set<string>();
       const instances = saved.instances.flatMap(item => {
         if (!item || typeof item.id !== 'string' || !item.id || seen.has(item.id) || !isProduct(item.snapshot) ||
@@ -40,12 +48,13 @@ export function readWorkspace(): Workspace {
         seen.add(item.id);
         return [{
           ...item,
+          snapshot: restoreProduct(item.snapshot, version === 3 && !isShape(item.shape ?? '')),
           assetId: item.assetId && (isShape(item.assetId) || library.some(model => model.id === item.assetId)) ? item.assetId : null,
           shape: item.shape && isShape(item.shape) ? item.shape : undefined,
         }];
       });
       return {
-        schemaVersion: 2, instances, library, camera: validateCamera(saved.camera),
+        schemaVersion: 3, instances, library, camera: validateCamera(saved.camera),
         preferences: {
           names: saved.preferences?.names !== false,
           dimensions: saved.preferences?.dimensions !== false,
@@ -56,11 +65,19 @@ export function readWorkspace(): Workspace {
       };
     }
   } catch { /* Fall back to the earlier workspace. */ }
+  return null;
+}
+
+export function readWorkspace(): Workspace {
+  const saved = readVersion(key, 3) ?? readVersion('noruler-v2', 2);
+  if (saved) return saved;
   const previous = readSaved();
-  const presets = [...PRESETS, ...previous.library.filter(item => item.preset).map(item => ({ ...item, detail: '내 프리셋', color: '#89b2ff' }))];
+  const library = previous.library.map(item => restoreProduct(item, false));
+  const product = previous.product && restoreProduct(previous.product, false);
+  const presets = [...PRESETS, ...library.filter(item => item.preset).map(item => ({ ...item, detail: '내 프리셋', color: '#89b2ff' }))];
   return {
-    schemaVersion: 2, library: previous.library, unit: previous.unit, camera: null, preferences,
-    instances: initialInstances(previous.product, presets.filter(item => previous.selected.includes(item.id))),
+    schemaVersion: 3, library, unit: previous.unit, camera: null, preferences,
+    instances: initialInstances(product, presets.filter(item => previous.selected.includes(item.id))),
   };
 }
 

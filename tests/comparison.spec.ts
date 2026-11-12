@@ -241,3 +241,35 @@ test('cancels a pending image analysis without applying its late result', async 
   await expect(page.getByRole('button', { name: '이미지 분석' })).toBeEnabled();
   await expect(page.getByRole('region', { name: '책상 3D 초안' })).toHaveCount(0);
 });
+
+test('keeps the desk shape through placement, duplication, edits, undo and reload', async ({ page }) => {
+  await page.route('**/api/image-dimensions', route => route.fulfill({ json: {
+    subjects: [deskSubject], candidates: [deskOptions[0]],
+  } }));
+  await page.goto('/');
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await page.getByRole('button', { name: '이미지 분석' }).click();
+  await page.getByRole('button', { name: '앞뒤 바꾸기' }).click();
+  await page.getByRole('button', { name: '책상을 비교 공간에 추가' }).click();
+  const desks = page.locator('.object-row').filter({ hasText: '사진에서 만든 책상' });
+  await expect(desks).toHaveCount(1);
+  await expect(desks.first()).toContainText('800 × 500 × 740 mm');
+  await desks.first().getByRole('button', { name: /복제/ }).click();
+  await expect(desks).toHaveCount(2);
+  await desks.last().getByRole('button', { name: '치수 수정' }).click();
+  await page.locator('#width').fill('820');
+  await page.getByRole('button', { name: '치수 수정 적용' }).click();
+  await expect(desks.last()).toContainText('820 × 500 × 740 mm');
+  await page.getByRole('button', { name: '실행 취소' }).click();
+  await expect(desks.last()).toContainText('800 × 500 × 740 mm');
+  await page.getByRole('button', { name: '다시 실행' }).click();
+  await page.reload();
+  await expect(desks.last()).toContainText('820 × 500 × 740 mm');
+  await page.getByRole('button', { name: '꺼내기' }).first().click();
+  await expect(desks).toHaveCount(3);
+  const shapes = await page.evaluate(() => JSON.parse(localStorage.getItem('noruler-v3')!).instances
+    .map((instance: { snapshot: { deskShape?: { frontFlipped: boolean } } }) => instance.snapshot.deskShape)
+    .filter(Boolean));
+  expect(shapes).toHaveLength(3);
+  expect(shapes.every((shape: { frontFlipped: boolean }) => shape.frontFlipped)).toBe(true);
+});

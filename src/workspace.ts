@@ -14,13 +14,17 @@ export type SceneInstance = Pose & {
 
 export const restingPose = (x = 0): Pose => ({ positionMm: { x, y: 0, z: 0 }, yawDeg: 0 });
 
+function copyProduct({ name, width, depth, height, deskShape }: Product): Product {
+  return { name, width, depth, height, ...(deskShape ? { deskShape: { ...deskShape } } : {}) };
+}
+
 export function initialInstances(product: ActiveProduct | null, presets: Preset[]): SceneInstance[] {
   return sceneLayout(product, presets).map(({ object, x }, index) => {
     const preset = presets[index - (product ? 1 : 0)];
     return {
       id: preset ? `initial-${preset.id}` : 'initial-product',
       assetId: preset?.id ?? product?.id ?? null,
-      snapshot: { name: object.name, width: object.width, depth: object.depth, height: object.height },
+      snapshot: copyProduct(object),
       shape: preset && PRESETS.some(item => item.id === preset.id) ? preset.id : undefined,
       ...restingPose(x / WORLD_SCALE),
     };
@@ -53,8 +57,7 @@ export function addInstance(instances: SceneInstance[], snapshot: Product, asset
   // Start beyond the rightmost object's rotated footprint.
   const right = instances.reduce((edge, item) => Math.max(edge, instanceBounds(item).max.x), -Infinity);
   const x = instances.length ? right + 50 + snapshot.width / 2 : 0;
-  const { name, width, depth, height } = snapshot;
-  return [...instances, { id: crypto.randomUUID(), assetId, snapshot: { name, width, depth, height }, shape, ...restingPose(x) }];
+  return [...instances, { id: crypto.randomUUID(), assetId, snapshot: copyProduct(snapshot), shape, ...restingPose(x) }];
 }
 
 export function resetLayout(instances: SceneInstance[]): SceneInstance[] {

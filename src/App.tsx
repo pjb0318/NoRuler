@@ -24,6 +24,7 @@ function PresetIcon({ id, size = 26 }: { id: PresetId; size?: number }) {
 const axisLabels = { width: ['가로', 'Width', 'W'], depth: ['깊이', 'Depth', 'D'], height: ['높이', 'Height', 'H'] };
 type AxisReview = Partial<Record<keyof Dimensions, 'confirmed' | 'edited' | 'pending'>>;
 type OptionDraft = {
+  name: string;
   draft: Record<keyof Dimensions, string>;
   unit: Unit;
   readings: ImageDimensions;
@@ -127,7 +128,7 @@ export default function App() {
   }, [help]);
   function useImageChoice(next: ImageChoice | null, reset = false) {
     if (reset) optionDrafts.current.clear();
-    else if (choice && readings) optionDrafts.current.set(choice.id, { draft, unit, readings, reviewedAxes, frontFlipped });
+    else if (choice && readings) optionDrafts.current.set(choice.id, { name, draft, unit, readings, reviewedAxes, frontFlipped });
     setChoice(next);
     setReviewedAxes({});
     setFrontFlipped(false);
@@ -139,12 +140,18 @@ export default function App() {
     }
     const previous = optionDrafts.current.get(next.id);
     if (previous) {
+      setName(previous.name);
       setDraft(previous.draft);
       setUnit(previous.unit);
       setReadings(previous.readings);
       setReviewedAxes(previous.reviewedAxes);
       setFrontFlipped(previous.frontFlipped);
       return;
+    }
+    if (next.subject && supportsDesk(next.subject.shapeEvidence)) {
+      const label = next.candidate.label;
+      const subject = next.subject.label;
+      setName((subject === label ? subject : `${subject} · ${label}`).slice(0, 60));
     }
     const result = next.candidate.dimensions;
     setReadings(result);
@@ -183,7 +190,7 @@ export default function App() {
     if (editing) {
       if (AXES.every(axis => editing.snapshot[axis] === parsed[axis])) return;
       const candidate = placeInstance({
-        ...editing, shape: undefined, snapshot: { ...parsed, name: editing.snapshot.name },
+        ...editing, shape: undefined, snapshot: { ...editing.snapshot, ...parsed },
       }, instances);
       if (!candidate) {
         setError('크기를 바꾸면 주변 물건과 겹쳐요. 먼저 물건을 옮겨 주세요.');
@@ -194,13 +201,17 @@ export default function App() {
       setStatus('선택한 물건의 치수를 수정했어요.');
       return;
     }
-    const existing = library.find(model => model.name === name.trim() && AXES.every(axis => model[axis] === parsed[axis]));
+    const existing = library.find(model => model.name === name.trim() &&
+      AXES.every(axis => model[axis] === parsed[axis]) &&
+      model.deskShape?.kind === deskShape?.kind &&
+      model.deskShape?.frontFlipped === deskShape?.frontFlipped &&
+      model.deskShape?.clearanceRatio === deskShape?.clearanceRatio);
     const id = existing?.id ?? `custom-${crypto.randomUUID()}`;
-    const saved: SavedModel = { ...parsed, id, name: name.trim(), history: true, preset: existing?.preset ?? false };
+    const saved: SavedModel = { ...parsed, id, name: name.trim(), history: true, preset: existing?.preset ?? false, ...(deskShape ? { deskShape } : {}) };
     setLibrary(current => [saved, ...current.filter(model => model.id !== id)]);
     setInstances(current => addInstance(current, saved, saved.id));
     setError('');
-    setStatus('입력한 크기를 3D 공간에 반영했어요.');
+    setStatus(deskShape ? '책상 모델을 비교 공간에 추가했어요.' : '입력한 크기를 3D 공간에 반영했어요.');
   }
   function resetInput() {
     setEditingId(null);
@@ -304,6 +315,7 @@ export default function App() {
                     setError('');
                   }}>이 값 확인</button>}
               </small>}</div>)}</div>
+              {deskShape && <p className="input-caption">비교 공간에서는 책상의 전체 외곽을 기준으로 배치해요.</p>}
               {clearance?.mm != null && <p className="input-caption">하부 여유 높이 약 {displayValue(clearance.mm, unit)} {unit}</p>}
               {evidence?.readiness === 'needs_view' && <p className="input-caption">
                 {evidence.nextView ? `형태를 확인하려면 ${evidence.nextView} 사진이 필요해요.` : '형태를 확인하려면 다른 각도의 사진이 필요해요.'} 치수를 입력하면 상자로 비교할 수 있어요.
@@ -319,7 +331,7 @@ export default function App() {
               </div>}
               <div className="dimension-guide"><svg viewBox="0 0 100 70" width="83" height="63" fill="none"><path d="m25 24 32-12 25 16-32 13-25-17v24l25 17 32-13V28M50 41v24" stroke="#b5bfce" strokeWidth="1.4" /><path d="m23 54 23 15M85 32v22M54 69l28-12" stroke="#a7b9da" strokeWidth="1.2" /><text x="26" y="68" fill="#6380aa" fontSize="10">W</text><text x="89" y="47" fill="#6380aa" fontSize="10">H</text><text x="70" y="69" fill="#6380aa" fontSize="10">D</text></svg><p>상세 페이지의 치수를<br />그대로 입력해 주세요.</p></div>
               {error && <p id="input-error" className="input-error" role="alert">{error}</p>}
-              <button className="primary-button" type="submit" disabled={!!deskShape && !reviewedDimensions}><Box size={17} />{editing ? '치수 수정 적용' : deskShape ? '상자로 크기 비교하기' : '3D로 크기 비교하기'}<ArrowRight size={17} /></button>
+              <button className="primary-button" type="submit" disabled={!!deskShape && !reviewedDimensions}><Box size={17} />{editing ? '치수 수정 적용' : deskShape ? '책상을 비교 공간에 추가' : '3D로 크기 비교하기'}<ArrowRight size={17} /></button>
               {editing && <button type="button" className="edit-mode save-edited-model" onClick={() => saveEditedModel(editing)}>현재 치수를 새 모델로 저장</button>}
               <p className="input-caption">{editing && !dirty ? '선택한 물건에 반영되어 있어요' : '확인한 치수를 공간에 반영할 수 있어요'}</p>
             </form>
@@ -344,7 +356,7 @@ export default function App() {
             {storageFailed && <p role="alert" className="input-error">이번 배치를 브라우저에 저장하지 못했어요.</p>}
             <div className="object-list">{instances.map(item => <div className="object-row" key={item.id}>
               <button className="object-icon" aria-label={`${item.snapshot.name} 선택`} aria-pressed={selectedId === item.id} onClick={() => setSelectedId(item.id)}><PresetIcon id={item.shape ?? 'custom-box'} size={19} /></button>
-              <div className="object-name"><strong title={item.snapshot.name}>{item.snapshot.name}</strong><small>{item.shape ? '기본 프리셋' : '내 제품'}</small></div>
+              <div className="object-name"><strong title={item.snapshot.name}>{item.snapshot.name}</strong><small>{item.shape ? '기본 프리셋' : item.snapshot.deskShape ? '사진에서 만든 책상' : '내 제품'}</small></div>
               <span className="object-dimensions">{dimensionText(item.snapshot, unit)}</span>
               <button className="remove-object" onClick={() => editInstance(item)}>치수 수정</button>
               <button className="remove-object" aria-label={`${item.snapshot.name} 복제`} onClick={() => setInstances(current => addInstance(current, item.snapshot, item.assetId, item.shape))}><Copy size={14} /></button>
