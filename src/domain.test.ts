@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Box3, Vector3 } from 'three';
 import { AXES, DEFAULT_PRODUCT, PRESETS, WORLD_SCALE, displayValue, parseDimensions, sceneLayout } from './domain.ts';
 import { createModel } from './scene.ts';
+import { deskParts, normalizeImageAnalysis, supportsDesk } from './imageDimensions.ts';
 import { resolvePlacement } from './placement.ts';
 import { addInstance, changeScene, initialInstances, stepScene } from './workspace.ts';
 import { readWorkspace, writeWorkspace } from './storage.ts';
@@ -129,4 +130,28 @@ test('migrates an earlier workspace and restores duplicate placements, camera an
     if (priorStorage) Object.defineProperty(globalThis, 'localStorage', priorStorage);
     else Reflect.deleteProperty(globalThis, 'localStorage');
   }
+});
+
+test('image analysis preserves shape readiness without dimensions and independent option measurements', () => {
+  const shapeEvidence = {
+    readiness: 'ready', kind: 'cross-braced-desk', parts: deskParts,
+    region: { left: .1, top: .3, right: .9, bottom: .95 },
+  };
+  const reading = (mm: number) => ({ mm, evidence: '치수선', needsReview: false });
+  const options = [[800, 500], [1000, 600], [1200, 600]].map(([w, d]) => ({
+    label: String(w), dimensions: { width: reading(w), depth: reading(d), height: reading(740) },
+    clearance: reading(700),
+  }));
+  const result = normalizeImageAnalysis({ subjects: [
+    { label: '치수 없는 책상', shapeEvidence },
+    { label: '옵션 책상', shapeEvidence: { readiness: 'needs_view' }, options },
+  ] });
+  assert.equal(result.subjectStatus, 'needs_selection');
+  assert.ok(supportsDesk(result.subjects[0].shapeEvidence));
+  assert.ok(!supportsDesk(result.subjects[1].shapeEvidence));
+  assert.ok(AXES.every(axis => result.candidates[0].dimensions[axis].mm === null));
+  assert.deepEqual(result.candidates.slice(1).map(option => AXES.map(axis => option.dimensions[axis].mm)),
+    [[800, 500, 740], [1000, 600, 740], [1200, 600, 740]]);
+  assert.equal(result.candidates[3].clearance?.mm, 700);
+  assert.equal(result.candidates[3].subjectId, result.subjects[1].id);
 });
