@@ -1,0 +1,15 @@
+<svg font-family="system-ui, sans-serif" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 510" width="720" height="510">
+  <rect width="720" height="510" fill="#f6f9ff"/>
+  <rect x="34" y="31" width="652" height="448" rx="20" fill="white" stroke="#dbe6f7"/>
+  <text x="71" y="81" fill="#1e334f" font-size="28" font-weight="700">모니터 받침대</text>
+  <text x="648" y="81" text-anchor="end" fill="#526787" font-size="18">시연용 예시 자료</text>
+  <ellipse cx="367" cy="274" rx="220" ry="31" fill="#e6edf8"/>
+  <path d="M158 171 L459 171 L552 116 L253 116 Z" fill="#647797" stroke="#435773" stroke-width="2"/>
+  <path d="M158 171 H459 V195 H158 Z M158 195 H190 V267 H158 Z M426 195 H459 V267 H426 Z" fill="#405574"/>
+  <path d="M459 171 L552 116 V139 L459 195 Z M459 190 L480 177 V251 L459 267 Z" fill="#2d415f"/>
+  <g stroke="#4b6491" stroke-width="2" fill="none"><path d="M158 300 H459 M166 294 L158 300 L166 306 M451 294 L459 300 L451 306 M516 195 V267 M510 203 L516 195 L522 203 M510 259 L516 267 L522 259"/></g>
+  <g fill="#2b4c7f" font-size="22" font-weight="650"><text x="308" y="330" text-anchor="middle">500 mm</text><text x="535" y="240">82 mm</text></g>
+  <rect x="71" y="366" width="578" height="76" rx="10" fill="#edf3fc"/>
+  <text x="94" y="398" fill="#274367" font-size="19" font-weight="700">기본형 사양표</text>
+  <text x="94" y="425" fill="#4a6386" font-size="18">가로 510 mm · 깊이 200 mm · 높이 82 mm</text>
+</svg>

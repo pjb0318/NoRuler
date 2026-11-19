@@ -1,0 +1,15 @@
+<svg font-family="system-ui, sans-serif" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 540" width="640" height="540">
+  <defs><linearGradient id="room" x2="0" y2="1"><stop stop-color="#eaf0f8"/><stop offset="1" stop-color="#f8fafc"/></linearGradient><linearGradient id="top" x2="1" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#e5eaf0"/></linearGradient></defs>
+  <rect width="640" height="540" fill="url(#room)"/>
+  <path d="M0 383 L640 350 V540 H0 Z" fill="#e4eaf0"/>
+  <ellipse cx="322" cy="439" rx="274" ry="51" fill="#d0d9e4"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M179 130 V347 M532 130 V350" stroke="#6e7b90" stroke-width="17"/>
+  <path d="M184 162 L525 330 M525 162 L184 330" stroke="#748397" stroke-width="10"/>
+  <path d="M97 202 V435 M455 202 V438" stroke="#8391a4" stroke-width="18"/>
+  <path d="M98 399 L176 314 M454 400 L531 315" stroke="#8391a4" stroke-width="12"/>
+  </g>
+  <path d="M78 194 L167 108 Q171 105 181 105 H532 Q546 105 541 111 L458 199 Q453 205 441 205 H88 Q72 205 78 194 Z" fill="url(#top)" stroke="#8e9db0" stroke-width="2"/>
+  <path d="M76 198 Q76 206 89 206 H439 Q453 206 458 198 L542 110 V120 L462 211 Q454 219 441 219 H89 Q76 219 76 211 Z" fill="#bfcad7" stroke="#8e9db0" stroke-width="2"/>
+  <text x="28" y="503" fill="#536780" font-size="22" font-weight="650">시연용 책상 이미지</text>
+</svg>

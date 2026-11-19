@@ -159,6 +159,7 @@ npm run test:e2e
 - `npm run build`는 TypeScript 검사와 Vite 프로덕션 빌드를 실행합니다.
 - `npm test`는 단위 변환, 입력 검증, 3D 모델의 외형 치수, 배치 및 분석 응답 처리를 검사합니다. [단위 테스트](src/domain.test.ts)
 - `npm run test:e2e`는 Chromium에서 이미지 검토, 모바일 터치 조작, 배치와 복원을 검사합니다. 위 설치 명령으로 테스트용 Chromium을 먼저 설치합니다. [브라우저 테스트](tests/comparison.spec.ts)
+- `node --experimental-strip-types scripts/screenshots.ts`는 같은 Chromium을 사용해 `docs/images/`의 시연 화면을 다시 캡처합니다. 내장 도면과 시연용 분석 응답을 사용하므로 API 키가 필요 없습니다. [캡처 스크립트](scripts/screenshots.ts)
 
 ## 출처와 크레딧
 
