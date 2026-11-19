@@ -121,7 +121,9 @@ export function imageDimensionsMiddleware(apiKey: string | undefined): Connect.N
     if (Number(req.headers['content-length']) > sizeLimit) {
       return reply(413, { error: '8 MB 이하의 이미지를 선택해 주세요.' });
     }
-    if (!apiKey) return reply(503, { error: '이미지 분석을 사용하려면 GEMINI_API_KEY를 설정해 주세요. 예시 도면은 바로 사용할 수 있어요.' });
+    if (!apiKey) return reply(503, {
+      error: 'Gemini API 키가 설정되지 않았어요. ‘예시 도면 써보기’를 누르거나 아래에 치수를 직접 입력해 주세요.',
+    });
 
     try {
       const chunks: Buffer[] = [];
