@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowRight, Box, Copy, ChevronDown, CircleHelp, File, Info, Keyboard, Laptop, Monitor, Redo2, RotateCcw, Undo2, Smartphone, Sparkles, X } from 'lucide-react';
+import { ArrowRight, Box, Copy, ChevronDown, CircleHelp, File, Info, Keyboard, Laptop, Monitor, Redo2, RotateCcw, Undo2, Smartphone, Sparkles, X } from 'lucide-react';
 import SceneViewer from './SceneViewer';
 import ModelLibrary from './ModelLibrary';
 import ImageInput from './ImageInput';
@@ -21,7 +21,7 @@ function PresetIcon({ id, size = 26 }: { id: PresetId; size?: number }) {
   const Icon = { a4: File, phone: Smartphone, laptop: Laptop, keyboard: Keyboard, monitor: Monitor }[id as 'a4' | 'phone' | 'laptop' | 'keyboard' | 'monitor'];
   return <Icon size={size} strokeWidth={1.45} />;
 }
-const axisLabels = { width: ['가로', 'Width', 'W'], depth: ['깊이', 'Depth', 'D'], height: ['높이', 'Height', 'H'] };
+const axisLabels = { width: ['가로', 'W'], depth: ['깊이', 'D'], height: ['높이', 'H'] };
 type AxisReview = Partial<Record<keyof Dimensions, 'confirmed' | 'edited' | 'pending'>>;
 type OptionDraft = {
   name: string;
@@ -302,12 +302,11 @@ export default function App() {
   }
   return <>
     <header className="site-header"><div className="header-inner">
-      <a href="/" className="brand" aria-label="NoRuler 홈"><span className="brand-mark"><svg width="23" height="23" viewBox="0 0 24 24" fill="none"><path d="M5 19V5l14 14V5" stroke="currentColor" strokeWidth="2.8" strokeLinejoin="round" /></svg></span>NoRuler<span className="beta">BETA</span></a>
-      <span className="header-tagline">I don’t want to find a ruler.</span>
+      <a href="/" className="brand" aria-label="NoRuler 홈"><span className="brand-mark"><svg width="23" height="23" viewBox="0 0 24 24" fill="none"><path d="M5 19V5l14 14V5" stroke="currentColor" strokeWidth="2.8" strokeLinejoin="round" /></svg></span>NoRuler</a>
       <button className="help-button" onClick={() => setHelp(v => !v)} aria-expanded={help}><CircleHelp size={17} />사용 방법</button>
     </div></header>
     <main>
-      <section className="intro"><div><div className="eyebrow"><span /> LESS GUESSING, MORE KNOWING</div><h1>숫자였던 크기가,<br className="mobile-break" /> <span>감각이 되는 순간.</span></h1><p>자를 찾지 마세요. 익숙한 물건과 나란히 놓아보면 알 수 있어요.</p></div><div className="intro-note"><Box size={19} strokeWidth={1.4} /><span>크기 비교를 위한<br /><strong>작은 3D 작업실</strong></span></div></section>
+      <section className="intro"><div><h1>숫자였던 크기가,<br className="mobile-break" /> <span>감각이 되는 순간.</span></h1><p>자를 찾지 마세요. 익숙한 물건과 나란히 놓아보면 알 수 있어요.</p></div></section>
       <div className="workspace">
         <aside className="sidebar">
           <section className="product-panel">
@@ -320,7 +319,7 @@ export default function App() {
               <label className="field-label" htmlFor="product-name">제품명</label>
               <input id="product-name" className="name-input" value={name} readOnly={!!editing} onChange={e => setName(e.target.value)} maxLength={60} placeholder="예: 사고 싶은 수납함" autoComplete="off" />
               <div className="dimensions-heading"><span className="field-label">제품 치수</span><div className="unit-switch" aria-label="치수 단위">{(['mm', 'cm'] as Unit[]).map(value => <button type="button" key={value} aria-pressed={unit === value} onClick={() => switchUnit(value)}>{value}</button>)}</div></div>
-              <div className="dimension-fields">{AXES.map(axis => <div className="dimension-field" key={axis}><label htmlFor={axis}><span className={`axis-dot ${axis}`} />{axisLabels[axis][0]}<span>{axisLabels[axis][1]}</span></label><div><input id={axis} type="number" inputMode="decimal" step="any" min={unit === 'cm' ? .01 : .1} max={unit === 'cm' ? 1000 : 10000} value={draft[axis]} onChange={e => {
+              <div className="dimension-fields">{AXES.map(axis => <div className="dimension-field" key={axis}><label htmlFor={axis}><span className={`axis-dot ${axis}`} />{axisLabels[axis][0]}<span aria-hidden="true">{axisLabels[axis][1]}</span></label><div><input id={axis} type="number" inputMode="decimal" step="any" min={unit === 'cm' ? .01 : .1} max={unit === 'cm' ? 1000 : 10000} value={draft[axis]} onChange={e => {
                 setDraft({ ...draft, [axis]: e.target.value });
                 if (readings) {
                   setReviewedAxes(current => ({ ...current, [axis]: e.target.value.trim() ? 'edited' : undefined }));
@@ -407,8 +406,7 @@ export default function App() {
                 setInstances(current => current.filter(other => other.id !== item.id));
               }}><X size={14} /></button>
             </div>)}</div>
-            {!instances.length && <p className="empty-selection"><ArrowDown size={15} />비교할 물건을 공간에 추가해 주세요.</p>}
-            <p className="dimension-order">치수 순서: 가로(W) × 깊이(D) × 높이(H)</p>
+            {instances.length > 0 && <p className="dimension-order">치수 순서: 가로(W) × 깊이(D) × 높이(H)</p>}
           </section>
           <ModelLibrary models={library} unit={unit} onOpen={openModel} onRename={renameModel} onChange={changeLibrary} />
         </div>
@@ -416,7 +414,7 @@ export default function App() {
       <section className="bottom-note"><span className="sparkle-icon"><Sparkles size={18} /></span><div><strong>이 정도 크기였구나.</strong><p>구매 전 작은 확인이, 도착 후 큰 차이를 만듭니다.</p></div><span className="ratio-note">실제 치수 비율로 비교합니다.<br />화면에 보이는 크기가 실물 크기는 아니에요.</span></section>
       <span className="sr-only" role="status">{status}</span>
     </main>
-    <footer><span className="footer-brand">NoRuler<span>자의 빈자리를 채우다.</span></span><span>Made for a better sense of size.</span></footer>
-    {help && <div className="help-backdrop" onClick={() => setHelp(false)}><section className="help-popover" role="dialog" aria-modal="true" aria-label="사용 방법" onClick={e => e.stopPropagation()}><button className="close-help" autoFocus onClick={() => setHelp(false)} aria-label="사용 방법 닫기"><X size={20} /></button><span className="eyebrow">A LITTLE GUIDE</span><h2>자를 꺼내는 대신, 세 단계.</h2><ol><li><strong>제품 치수를 입력하세요.</strong><p>가로, 깊이, 높이를 mm 또는 cm로 입력해요. 단위를 바꿔도 크기는 유지됩니다.</p></li><li><strong>익숙한 물건을 골라 주세요.</strong><p>6가지 프리셋을 여러 개 함께 비교할 수 있어요. 노트북과 A4 용지는 바닥에 놓인 상태예요.</p></li><li><strong>돌려 보고, 가까이 보세요.</strong><p>물건을 클릭하거나 탭해 선택하세요. 이동 화살표와 평면 손잡이를 당기거나 회전 링으로 방향을 바꿀 수 있어요. 빈 공간을 드래그하면 시점이 바뀌고, 스크롤이나 두 손가락 핀치로 확대할 수 있어요. 위치 초기화로 물건의 위치와 방향을 되돌릴 수 있어요.</p></li></ol><p className="help-footnote"><Info size={16} />화면상의 1:1 실물 크기가 아닌, 객체 간 실제 비율을 보여줍니다. 제품 치수는 최대 {formatNumber(10000)} mm까지 입력할 수 있어요.</p><button className="primary-button" onClick={() => setHelp(false)}>비교 시작하기<ChevronDown size={17} /></button></section></div>}
+    <footer><span className="footer-brand">NoRuler<span>자의 빈자리를 채우다.</span></span></footer>
+    {help && <div className="help-backdrop" onClick={() => setHelp(false)}><section className="help-popover" role="dialog" aria-modal="true" aria-label="사용 방법" onClick={e => e.stopPropagation()}><button className="close-help" autoFocus onClick={() => setHelp(false)} aria-label="사용 방법 닫기"><X size={20} /></button><h2>3D 크기 비교 방법</h2><ol><li><strong>제품 치수를 입력하세요.</strong><p>가로, 깊이, 높이를 mm 또는 cm로 입력해요. 단위를 바꿔도 크기는 유지됩니다.</p></li><li><strong>익숙한 물건을 골라 주세요.</strong><p>6가지 프리셋을 여러 개 함께 비교할 수 있어요. 노트북과 A4 용지는 바닥에 놓인 상태예요.</p></li><li><strong>돌려 보고, 가까이 보세요.</strong><p>물건을 클릭하거나 탭해 선택하세요. 이동 화살표와 평면 손잡이를 당기거나 회전 링으로 방향을 바꿀 수 있어요. 빈 공간을 드래그하면 시점이 바뀌고, 스크롤이나 두 손가락 핀치로 확대할 수 있어요. 위치 초기화로 물건의 위치와 방향을 되돌릴 수 있어요.</p></li></ol><p className="help-footnote"><Info size={16} />물건끼리 실제 치수 비율로 비교해요. 제품 치수는 최대 {formatNumber(10000)} mm까지 입력할 수 있어요.</p><button className="primary-button" onClick={() => setHelp(false)}>비교 시작하기<ChevronDown size={17} /></button></section></div>}
   </>;
 }

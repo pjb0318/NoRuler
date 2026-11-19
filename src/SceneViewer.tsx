@@ -67,8 +67,9 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
   useEffect(() => { engine.current?.setSnapEnabled(snap); }, [snap, retry]);
   useEffect(() => { engine.current?.setTransformMode(mode); }, [mode, retry]);
   return <div className="viewer-shell"><section className={`viewer${moveState.dragging ? ' is-moving-product' : ''}${names ? '' : ' hide-object-names'}`} aria-label="3D 비교 공간">
-    <div className="viewer-top"><span className="live-badge"><span /> LIVE COMPARISON</span><span className="scale-badge">모든 물건, 같은 축척</span></div>
+    <div className="viewer-top"><span className="live-badge"><span /> 3D 비교 공간</span><span className="scale-badge">모든 물건, 같은 축척</span></div>
     <div className="scene" ref={host} />
+    {!error && !instances.length && <p className="scene-empty" role="status">비교할 물건을 공간에 추가해 주세요.</p>}
     {error && <div className="scene-error"><TriangleAlert size={30} /><h3>3D 화면을 불러오지 못했어요</h3><p>브라우저의 하드웨어 가속을 켜거나<br />WebGL을 지원하는 브라우저에서 열어 주세요.</p><button onClick={() => { setError(false); setRetry(v => v + 1); }}>다시 시도</button></div>}
     <div className="view-switch" aria-label="시점 선택">
       {views.map(({ id, label }) => <button key={id} aria-pressed={view === id} onClick={() => engine.current?.setView(id)}>
@@ -76,10 +77,10 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
       </button>)}
     </div>
     <div className="view-indicator" aria-label="현재 시점">{views.find(option => option.id === view)?.label ?? '자유 시점'}</div>
-    <div className="object-move-bar">
+    {instances.length > 0 && <div className="object-move-bar">
       <span role="status"><Move size={13} />{moveState.dragging ? (mode === 'rotate' ? '물건을 돌리는 중이에요' : '물건을 옮기는 중이에요') : moveState.placementMessage || (moveState.selected ? '물건 위의 손잡이를 드래그하세요' : '물건을 클릭하거나 탭해 선택하세요')}</span>
       <button aria-label="물건 위치 초기화" title="물건의 위치와 회전 초기화" disabled={!moveState.moved} onClick={onReset}><RotateCcw size={12} />위치 초기화</button>
-    </div>
+    </div>}
     <div className="viewer-tools">
       <button title="확대" aria-label="확대" onClick={() => engine.current?.zoom(1.25)}><Plus size={18} /></button>
       <button title="축소" aria-label="축소" onClick={() => engine.current?.zoom(.8)}><Minus size={18} /></button>

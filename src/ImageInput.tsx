@@ -9,6 +9,8 @@ import type { ImageAnalysis, ImageSubject, Measurement, SizeCandidate, SpecRow }
 
 export type ImageChoice = { id: string; candidate: SizeCandidate; subject?: ImageSubject };
 
+const analysisFailure = '이미지를 분석하지 못했어요. 다시 시도하거나 치수를 직접 입력해 주세요.';
+
 export default function ImageInput({ onRead, onMeasurements, review }: {
   onRead: (result: ImageChoice | null, reset?: boolean) => void;
   onMeasurements: (measurements: Measurement[]) => void;
@@ -132,23 +134,28 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
       const response = await fetch('/api/image-dimensions', {
         method: 'POST', body, signal: controller.signal,
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
-      if (!Array.isArray(result.candidates)) throw new Error('분석 결과를 읽지 못했어요. 다시 시도해 주세요.');
-      if (!controller.signal.aborted) {
-        const next: ImageAnalysis = { ...result, subjects: result.subjects ?? [] };
-        setSpecRows(next.specRows ?? []);
-        setSelectedSpecId('');
-        if (specOnly) {
-          if (!next.specRows?.length) setError('사양에서 치수 항목을 찾지 못했어요.');
-        } else {
-          setAnalysis(next);
-          if (next.subjects.length <= 1) chooseSubject(next, next.subjects[0]?.id, true);
-          if (!next.candidates.length) setError('상품이나 치수 정보를 찾지 못했어요. 치수를 직접 입력해 주세요.');
-        }
+      const result = await response.json().catch(() => null);
+      if (controller.signal.aborted) return;
+      if (!response.ok) {
+        setError(typeof result?.error === 'string' && result.error.trim() ? result.error : analysisFailure);
+        return;
       }
-    } catch (error) {
-      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : '이미지를 분석하지 못했어요.');
+      if (!Array.isArray(result?.candidates)) {
+        setError('분석 결과를 읽지 못했어요. 다시 시도하거나 치수를 직접 입력해 주세요.');
+        return;
+      }
+      const next: ImageAnalysis = { ...result, subjects: result.subjects ?? [] };
+      setSpecRows(next.specRows ?? []);
+      setSelectedSpecId('');
+      if (specOnly) {
+        if (!next.specRows?.length) setError('사양에서 치수 항목을 찾지 못했어요.');
+      } else {
+        setAnalysis(next);
+        if (next.subjects.length <= 1) chooseSubject(next, next.subjects[0]?.id, true);
+        if (!next.candidates.length) setError('상품이나 치수 정보를 찾지 못했어요. 치수를 직접 입력해 주세요.');
+      }
+    } catch {
+      if (!controller.signal.aborted) setError(analysisFailure);
     } finally {
       if (!controller.signal.aborted) setPending(false);
     }
