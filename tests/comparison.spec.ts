@@ -51,27 +51,62 @@ test('keeps placed instances when their saved model is removed', async ({ page }
   await expect(button('꺼내기')).toHaveCount(0);
 });
 
-test('reviews a diagram, preserves converted units, and requires confirmation of uncertain axes', async ({ page }) => {
+test('reviews the built-in desk example, switches options, swaps axes, and preserves converted units', async ({ page }) => {
   await page.goto('/');
   const button = (name: string) => page.getByRole('button', { name, exact: true });
   await button('예시 도면 써보기').click();
+  const preview = page.getByRole('region', { name: '책상 3D 초안' });
+  await expect(preview.locator('canvas')).toBeVisible();
+  await expect(page.getByRole('radio', { name: /^800 / })).toBeChecked();
+  await expect(page.locator('#width')).toHaveValue('800');
+  await expect(page.locator('#depth')).toHaveValue('500');
+  await expect(page.locator('#height')).toHaveValue('740');
+  await page.getByRole('radio', { name: /^1200 / }).check();
+  await expect(page.locator('#width')).toHaveValue('1200');
+  await expect(page.locator('#depth')).toHaveValue('600');
+  await expect(page.locator('#height')).toHaveValue('740');
   await page.getByRole('button', { name: /원본 확대/ }).click();
+  await expect(page.getByLabel('선택한 상품 영역')).toBeVisible();
   await button('원본 더 확대').click();
   await expect(page.getByRole('dialog')).toContainText('150%');
   await button('닫기').click();
-  await page.locator('#depth').fill('80');
-  await button('3D로 크기 비교하기').click();
-  await expect(page.getByRole('alert')).toContainText('확인 필요');
-  await button('높이 치수 확인').click();
   await button('축 교환').click();
-  await expect(page.locator('#width')).toHaveValue('80');
-  await expect(page.locator('#depth')).toHaveValue('130');
+  await expect(page.locator('#width')).toHaveValue('600');
+  await expect(page.locator('#depth')).toHaveValue('1200');
+  await expect(button('책상을 비교 공간에 추가')).toBeDisabled();
   await button('가로 치수 확인').click();
   await button('깊이 치수 확인').click();
+  await expect(button('책상을 비교 공간에 추가')).toBeEnabled();
   await button('cm').click();
-  await expect(page.locator('#width')).toHaveValue('8');
+  await expect(page.locator('#width')).toHaveValue('60');
+  await button('책상을 비교 공간에 추가').click();
+  const lastRow = page.locator('.object-row').last();
+  await expect(lastRow).toContainText('60 × 120 × 74 cm');
+  await expect(lastRow).toContainText('사진에서 만든 책상');
+});
+
+test('requires confirmation of uncertain axes before adding a non-desk product', async ({ page }) => {
+  await page.route('**/api/image-dimensions', route => route.fulfill({ json: {
+    candidates: [{
+      label: '예시 받침대',
+      dimensions: {
+        width: { mm: 130, evidence: '아래쪽 치수선', needsReview: false },
+        depth: { mm: null, evidence: '표기 없음', needsReview: true },
+        height: { mm: 35, evidence: '전체 높이 확인 필요', needsReview: true },
+      },
+    }],
+  } }));
+  await page.goto('/');
+  const button = (name: string) => page.getByRole('button', { name, exact: true });
+  await page.locator('#measurement-image').setInputFiles('public/measurement-example.png');
+  await button('이미지 분석').click();
+  await expect(page.locator('#width')).toHaveValue('130');
+  await page.locator('#depth').fill('80');
   await button('3D로 크기 비교하기').click();
-  await expect(page.locator('.object-row').last()).toContainText('8 × 13 × 3.5 cm');
+  await expect(page.locator('#input-error')).toContainText('확인 필요');
+  await button('높이 치수 확인').click();
+  await button('3D로 크기 비교하기').click();
+  await expect(page.locator('.object-row').last()).toContainText('130 × 80 × 35 mm');
 });
 
 test('uses only the chosen option from a multiple-candidate response', async ({ page }) => {

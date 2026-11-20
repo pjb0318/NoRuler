@@ -4,7 +4,7 @@ import { Box3, Vector3 } from 'three';
 import { AXES, DEFAULT_PRODUCT, PRESETS, WORLD_SCALE, displayValue, parseDimensions, sceneLayout } from './domain.ts';
 import { createModel } from './scene.ts';
 import { makeDeskShape } from './deskModel.ts';
-import { deskParts, normalizeImageAnalysis, supportsDesk } from './imageDimensions.ts';
+import { deskParts, exampleAnalysis, normalizeImageAnalysis, supportsDesk } from './imageDimensions.ts';
 import { resolvePlacement } from './placement.ts';
 import { addInstance, changeScene, initialInstances, stepScene } from './workspace.ts';
 import { readWorkspace, writeWorkspace } from './storage.ts';
@@ -227,4 +227,26 @@ test('keeps provenance, resolves matching unlabeled triples and rejects conflict
   assert.equal(conflicting.candidates[0].dimensions.height.needsReview, true);
   assert.deepEqual(conflicting.candidates[0].dimensions.height.measurements?.map(item => item.mm), [82, 90]);
   assert.equal(analyze(table).candidates[0].dimensions.width.mm, null);
+});
+
+test('built-in desk example provides three ready desk options with verified provenance', () => {
+  assert.equal(exampleAnalysis.subjectStatus, 'identified');
+  assert.equal(exampleAnalysis.subjects.length, 1);
+  const subject = exampleAnalysis.subjects[0];
+  assert.ok(supportsDesk(subject.shapeEvidence));
+  const region = subject.shapeEvidence?.region;
+  assert.ok(region && region.left >= 0 && region.left < region.right && region.right <= 1);
+  assert.ok(region && region.top >= 0 && region.top < region.bottom && region.bottom <= 1);
+  assert.deepEqual(exampleAnalysis.candidates.map(option => option.label), ['800', '1000', '1200']);
+  assert.deepEqual(
+    exampleAnalysis.candidates.map(option => AXES.map(axis => option.dimensions[axis].mm)),
+    [[800, 500, 740], [1000, 600, 740], [1200, 600, 740]],
+  );
+  for (const option of exampleAnalysis.candidates) {
+    assert.equal(option.clearance?.mm, 700);
+    for (const axis of AXES) {
+      assert.equal(option.dimensions[axis].needsReview, false);
+      assert.equal(option.dimensions[axis].measurements?.length, 2);
+    }
+  }
 });

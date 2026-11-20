@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import MeasurementReview from './MeasurementReview';
 import ProductRegion from './ProductRegion';
 import type { Region } from './ProductRegion';
-import { exampleDimensions, imageSizeLimit, imageTypes, specTextLimit, suggestedSpecRow } from './imageDimensions';
+import { exampleAnalysis, imageSizeLimit, imageTypes, specTextLimit, suggestedSpecRow } from './imageDimensions';
 import type { ReactNode } from 'react';
 import type { ImageAnalysis, ImageSubject, Measurement, SizeCandidate, SpecRow } from './imageDimensions';
 
@@ -239,7 +239,10 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
       <button type="button" onClick={() => {
         chooseFile();
         setExample(true);
-        onRead({ id: 'example', candidate: { label: '예시 도면', dimensions: exampleDimensions } });
+        setAnalysis(exampleAnalysis);
+        const exampleSubject = exampleAnalysis.subjects[0];
+        setSubjectId(exampleSubject.id);
+        chooseOption(exampleAnalysis.candidates[0], 0, exampleSubject, true);
       }}>예시 도면 써보기</button>
     </div>
     {analysis && analysis.subjects.length > 1 && <fieldset className="size-candidates">
@@ -277,7 +280,7 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
       : option?.measurements && <MeasurementReview key={option.id} fromSpec={false}
           measurements={option.measurements} onApply={onMeasurements} />}
     {file && <p>분석할 때 선택한 자료를 Gemini로 보냅니다.</p>}
-    {example && <p>예시 결과입니다. 아래에서 높이를 확인하고 깊이를 입력해 보세요.</p>}
+    {example && <p>예시 책상 결과입니다. 크기 옵션과 3D 초안을 확인한 뒤 비교 공간에 추가해 보세요.</p>}
     {error && <p className="input-error" role="alert">{error}</p>}
   </section>;
 }

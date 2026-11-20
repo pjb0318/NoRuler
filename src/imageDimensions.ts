@@ -204,8 +204,48 @@ export function normalizeImageAnalysis(value: unknown, sourceIds = ['photo']): I
 export const imageTypes = ['image/png', 'image/jpeg', 'image/webp'];
 export const imageSizeLimit = 8 * 1024 * 1024;
 
-export const exampleDimensions: ImageDimensions = {
-  width: { mm: 130, evidence: '아래쪽 전체 가로 치수선', needsReview: false },
-  height: { mm: 35, evidence: '오른쪽 세로 치수선이 전체 높이인지 확인해 주세요.', needsReview: true },
-  depth: { mm: null, evidence: '이 각도에서 깊이 표기를 찾을 수 없어요.', needsReview: true },
-};
+const deskAxisNames: Record<Axis, string> = { width: '가로', depth: '깊이', height: '높이' };
+
+export const exampleAnalysis: ImageAnalysis = normalizeImageAnalysis({
+  subjects: [{
+    label: '흰색 책상',
+    shapeEvidence: {
+      readiness: 'ready',
+      kind: 'cross-braced-desk',
+      region: { left: 0.31, top: 0.23, right: 0.76, bottom: 0.62 },
+      view: '앞쪽 사선',
+      parts: [...deskParts],
+      unseen: '상판 두께와 프레임 세부 치수',
+      nextView: '',
+    },
+    options: [[800, 500], [1000, 600], [1200, 600]].map(([width, depth]) => {
+      const values: Record<Axis, number> = { width, depth, height: 740 };
+      return {
+        label: String(width),
+        dimensions: Object.fromEntries(AXES.map(axis => [
+          axis,
+          { mm: values[axis], evidence: '도면 치수선 · 하단 옵션 사양표', needsReview: false },
+        ])),
+        clearance: { mm: 700, evidence: '하부 여유 높이 치수선', needsReview: false },
+        measurements: AXES.map(axis => ({
+          sourceId: 'photo',
+          axis,
+          mm: values[axis],
+          quote: `${deskAxisNames[axis]} ${values[axis]} mm`,
+          location: '도면 치수선',
+          basis: 'dimension_line',
+          scope: 'overall',
+        })),
+        embeddedSpecs: AXES.map(axis => ({
+          sourceId: 'photo',
+          axis,
+          mm: values[axis],
+          quote: `${deskAxisNames[axis]} ${values[axis]} mm`,
+          location: '하단 옵션 사양표',
+          basis: 'label',
+          scope: 'overall',
+        })),
+      };
+    }),
+  }],
+});
