@@ -938,8 +938,8 @@ export default function App() {
                             {count > 0 && <span className="preset-count">{count}</span>}
                           </span>
                           <span className="preset-card-detail">{preset.detail}</span>
-                          <small className="preset-card-dims">{dimensionText(preset, unit)}</small>
                         </span>
+                        <small className="preset-card-dims">{dimensionText(preset, unit)}</small>
                         <span className="preset-card-add" aria-hidden="true"><Plus size={14} /></span>
                       </button>
                     );
