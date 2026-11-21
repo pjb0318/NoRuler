@@ -769,6 +769,16 @@ test('renders a mobile bottom-sheet app shell with zero horizontal overflow acro
       expect(stageBox.y + stageBox.height).toBeLessThanOrEqual(railBox.y + 1);
       expect(railBox.y + railBox.height).toBeLessThanOrEqual(viewport.height + 1);
 
+      const version = page.locator('.app-version');
+      await expect(version).toBeVisible();
+      await expect(version).toHaveText(/^v\d+\.\d+\.\d+$/);
+      const githubLink = page.locator('.github-link');
+      await expect(githubLink).toBeVisible();
+      await expect(githubLink).toHaveAttribute('href', 'https://github.com/pjb0318/NoRuler');
+      const githubBox = (await githubLink.boundingBox())!;
+      expect(githubBox.x).toBeGreaterThanOrEqual(0);
+      expect(githubBox.x + githubBox.width).toBeLessThanOrEqual(viewport.width + 1);
+
       const labelBoxes = await rail.locator('.rail-label').evaluateAll(nodes =>
         nodes.map(node => node.getBoundingClientRect().width),
       );
@@ -832,5 +842,54 @@ test('renders a mobile bottom-sheet app shell with zero horizontal overflow acro
     } finally {
       await context.close();
     }
+  }
+});
+
+test('mobile sheet follows a drag, snaps, cancels safely, and exposes project information', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const page = await context.newPage();
+  try {
+    await page.goto('/');
+    const drawer = page.locator('.studio-drawer');
+    await page.getByRole('button', { name: '프리셋', exact: true }).click();
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveCSS('animation-name', 'sheet-enter');
+    await page.waitForTimeout(350);
+    const handle = page.locator('.sheet-grab-area');
+    const box = (await handle.boundingBox())!;
+    const startHeight = (await drawer.boundingBox())!.height;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 100, { steps: 5 });
+    expect((await drawer.boundingBox())!.height).toBeGreaterThan(startHeight + 70);
+    await page.mouse.up();
+    await expect(drawer).toHaveClass(/is-expanded/);
+
+    await page.waitForTimeout(350);
+    const expandedBox = (await handle.boundingBox())!;
+    await page.mouse.move(expandedBox.x + expandedBox.width / 2, expandedBox.y + expandedBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(expandedBox.x + expandedBox.width / 2, expandedBox.y + expandedBox.height / 2 + 80);
+    await handle.dispatchEvent('pointercancel', { pointerId: 1, pointerType: 'mouse', clientY: expandedBox.y + 80 });
+    await page.mouse.up();
+    await expect(drawer).toHaveClass(/is-expanded/);
+    await expect(drawer).not.toHaveClass(/is-dragging/);
+
+    await page.waitForTimeout(350);
+    const top = (await handle.boundingBox())!;
+    await page.mouse.move(top.x + top.width / 2, top.y + top.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(top.x + top.width / 2, top.y + top.height / 2 + 100, { steps: 5 });
+    await page.mouse.up();
+    await expect(drawer).not.toHaveClass(/is-expanded/);
+    await page.getByRole('button', { name: '프로젝트 정보' }).click();
+    const dialog = page.getByRole('dialog', { name: '자를 대기 전에, 크기부터 비교해요.' });
+    await expect(dialog).toContainText('Google Gemini');
+    await expect(dialog.getByRole('link', { name: 'MIT 라이선스' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole('button', { name: '프로젝트 정보' })).toBeFocused();
+  } finally {
+    await context.close();
   }
 });

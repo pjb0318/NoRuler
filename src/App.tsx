@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, FormEvent, TouchEvent } from 'react';
+import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent } from 'react';
 import {
   ArrowLeft,
   Bookmark,
@@ -47,6 +47,16 @@ import type { CameraState, Preferences, ThemeMode, Workspace } from './storage';
 type PanelId = 'add' | 'presets' | 'objects' | 'library';
 
 const MOBILE_MEDIA = '(max-width: 900px)';
+const GITHUB_REPO_URL = 'https://github.com/pjb0318/NoRuler';
+const APP_VERSION_LABEL = `v${__APP_VERSION__}`;
+
+function GithubIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.57.1.78-.25.78-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.26 5.67.41.36.78 1.06.78 2.13 0 1.54-.01 2.78-.01 3.16 0 .31.21.66.79.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+    </svg>
+  );
+}
 
 const panelTitles: Record<PanelId, string> = {
   add: '제품 추가',
@@ -85,7 +95,22 @@ export default function App() {
     typeof window === 'undefined' ? true : !window.matchMedia?.(MOBILE_MEDIA).matches,
   );
   const [sheetExpanded, setSheetExpanded] = useState(false);
-  const sheetDragStartY = useRef<number | null>(null);
+  const [drawerMounted, setDrawerMounted] = useState(drawerOpen);
+  const drawerRef = useRef<HTMLElement>(null);
+  const sheetDrag = useRef<{ pointerId: number; startY: number; startHeight: number; maxHeight: number; lastY: number; lastTime: number; velocity: number; moved: boolean } | null>(null);
+  const suppressSheetClick = useRef(false);
+  useEffect(() => {
+    if (drawerOpen) {
+      setDrawerMounted(true);
+      return;
+    }
+    if (!isMobile || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setDrawerMounted(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setDrawerMounted(false), 320);
+    return () => window.clearTimeout(timer);
+  }, [drawerOpen, isMobile]);
   useEffect(() => {
     const query = window.matchMedia?.(MOBILE_MEDIA);
     if (!query) return;
@@ -138,6 +163,19 @@ export default function App() {
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
   const [help, setHelp] = useState(false);
+  const [projectInfo, setProjectInfo] = useState(false);
+  const infoButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!projectInfo) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setProjectInfo(false);
+        infoButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [projectInfo]);
   const [resetKey, setResetKey] = useState(0);
   const [imageKey, setImageKey] = useState(0);
   const [readings, setReadings] = useState<ImageDimensions | null>(null);
@@ -216,21 +254,50 @@ export default function App() {
     setSheetExpanded(false);
   }
 
-  function onSheetTouchStart(event: TouchEvent) {
-    if (!isMobile || event.touches.length !== 1) return;
-    sheetDragStartY.current = event.touches[0].clientY;
+  function onSheetPointerDown(event: ReactPointerEvent<HTMLElement>) {
+    if (!isMobile || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || (event.target as HTMLElement).closest('button')) return;
+    const drawer = drawerRef.current;
+    const shell = drawer?.closest('.studio-shell');
+    const rail = shell?.querySelector('.studio-rail');
+    if (!drawer || !shell || !rail) return;
+    suppressSheetClick.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const height = drawer.getBoundingClientRect().height;
+    sheetDrag.current = { pointerId: event.pointerId, startY: event.clientY, startHeight: height, maxHeight: shell.getBoundingClientRect().height - rail.getBoundingClientRect().height - 12, lastY: event.clientY, lastTime: event.timeStamp, velocity: 0, moved: false };
+    drawer.style.height = `${height}px`;
+    drawer.classList.add('is-dragging');
   }
 
-  function onSheetTouchEnd(event: TouchEvent) {
-    const startY = sheetDragStartY.current;
-    sheetDragStartY.current = null;
-    if (!isMobile || startY === null || !event.changedTouches.length) return;
-    const deltaY = event.changedTouches[0].clientY - startY;
-    if (deltaY < -36) setSheetExpanded(true);
-    else if (deltaY > 36) {
-      if (sheetExpanded) setSheetExpanded(false);
-      else setDrawerOpen(false);
+  function onSheetPointerMove(event: ReactPointerEvent<HTMLElement>) {
+    const drag = sheetDrag.current;
+    const drawer = drawerRef.current;
+    if (!drag || !drawer || drag.pointerId !== event.pointerId) return;
+    const delta = event.clientY - drag.startY;
+    if (Math.abs(delta) > 4) drag.moved = true;
+    const elapsed = event.timeStamp - drag.lastTime;
+    if (elapsed > 0) drag.velocity = (event.clientY - drag.lastY) / elapsed;
+    drag.lastY = event.clientY;
+    drag.lastTime = event.timeStamp;
+    drawer.style.height = `${Math.max(0, Math.min(drag.maxHeight, drag.startHeight - delta))}px`;
+  }
+
+  function finishSheetDrag(event: ReactPointerEvent<HTMLElement>, cancelled = false) {
+    const drag = sheetDrag.current;
+    const drawer = drawerRef.current;
+    if (!drag || !drawer || drag.pointerId !== event.pointerId) return;
+    sheetDrag.current = null;
+    const delta = event.clientY - drag.startY;
+    suppressSheetClick.current = (drag.moved || cancelled) && event.currentTarget.classList.contains('sheet-grab-area');
+    drawer.classList.remove('is-dragging');
+    if (!cancelled && drag.moved) {
+      const direction = Math.abs(drag.velocity) > .45 && event.timeStamp - drag.lastTime < 100 ? Math.sign(drag.velocity) : Math.abs(delta) > 36 ? Math.sign(delta) : 0;
+      if (direction < 0) setSheetExpanded(true);
+      if (direction > 0) {
+        if (sheetExpanded) setSheetExpanded(false);
+        else closeDrawer();
+      }
     }
+    drawer.style.height = '';
   }
 
   function save() {
@@ -610,6 +677,9 @@ export default function App() {
             </button>
           </div>
           <div className="header-actions">
+            <button ref={infoButtonRef} type="button" className="info-button" aria-label="프로젝트 정보" aria-expanded={projectInfo} onClick={() => setProjectInfo(true)}>
+              <Info size={15} /><span className="header-button-label">정보</span>
+            </button>
             <button
               type="button"
               className="theme-toggle-button"
@@ -670,26 +740,28 @@ export default function App() {
           </button>
         </nav>
 
-        {isMobile && drawerOpen && sheetExpanded && (
-          <div className="sheet-scrim" aria-hidden="true" onClick={() => setSheetExpanded(false)} />
-        )}
+        {isMobile && <div className={drawerOpen && sheetExpanded ? 'sheet-scrim is-visible' : 'sheet-scrim'} aria-hidden="true" onClick={() => setSheetExpanded(false)} />}
 
         <aside
-          className={sheetExpanded ? 'studio-drawer is-expanded' : 'studio-drawer'}
+          ref={drawerRef}
+          className={`studio-drawer${sheetExpanded ? ' is-expanded' : ''}${!drawerOpen ? ' is-closing' : ''}`}
           data-panel={activePanel}
           aria-label="도구 패널"
-          hidden={!drawerOpen}
+          hidden={!drawerMounted}
+          inert={!drawerOpen}
         >
           <div
             className="sheet-grab-area"
             aria-hidden="true"
-            onTouchStart={onSheetTouchStart}
-            onTouchEnd={onSheetTouchEnd}
-            onClick={() => setSheetExpanded(value => !value)}
+            onPointerDown={onSheetPointerDown}
+            onPointerMove={onSheetPointerMove}
+            onPointerUp={event => finishSheetDrag(event)}
+            onPointerCancel={event => finishSheetDrag(event, true)}
+            onClick={() => { if (!suppressSheetClick.current) setSheetExpanded(value => !value); suppressSheetClick.current = false; }}
           >
             <span className="sheet-handle-pill" />
           </div>
-          <div className="drawer-header" onTouchStart={onSheetTouchStart} onTouchEnd={onSheetTouchEnd}>
+          <div className="drawer-header" onPointerDown={onSheetPointerDown} onPointerMove={onSheetPointerMove} onPointerUp={event => finishSheetDrag(event)} onPointerCancel={event => finishSheetDrag(event, true)}>
             <div className="drawer-title">
               <h2>{editing && activePanel === 'add' ? '치수 수정' : panelTitles[activePanel]}</h2>
               {!editing && activePanel === 'objects' && <span className="count-badge">{instances.length}</span>}
@@ -1059,16 +1131,48 @@ export default function App() {
             theme={resolvedTheme}
             onReset={() => { setInstances(resetLayout); setResetKey(value => value + 1); }}
           />
-          <div className="studio-footer">
-            <span>1:1 실제 치수 비율 기준</span>
-            <span>실제 치수 비율로 비교합니다. 화면에 보이는 크기가 실물 크기는 아니에요.</span>
-          </div>
+          <footer className="studio-footer">
+            <div className="studio-footer-meta">
+              <span className="studio-footer-scale">1:1 실제 치수 비율 기준</span>
+              <span className="studio-footer-sep" aria-hidden="true">·</span>
+              <span className="app-version" title="배포 버전">{APP_VERSION_LABEL}</span>
+              <a
+                href={GITHUB_REPO_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="github-link"
+                aria-label="NoRuler GitHub 저장소"
+                title="GitHub 저장소 열기"
+              >
+                <GithubIcon />
+              </a>
+            </div>
+            <span className="studio-footer-note">실제 치수 비율로 비교합니다. 화면에 보이는 크기가 실물 크기는 아니에요.</span>
+          </footer>
         </section>
 
         <span className="sr-only" role="status">{status}</span>
       </main>
 
       {toast && <div className="stage-toast" role="status">{toast}</div>}
+
+      {projectInfo && (
+        <div className="help-backdrop" onClick={() => { setProjectInfo(false); infoButtonRef.current?.focus(); }}>
+          <section className="help-popover project-info" role="dialog" aria-modal="true" aria-labelledby="project-info-title" onClick={event => event.stopPropagation()}>
+            <button className="close-help" autoFocus onClick={() => { setProjectInfo(false); infoButtonRef.current?.focus(); }} aria-label="프로젝트 정보 닫기"><X size={20} /></button>
+            <span className="project-info-eyebrow">ABOUT NORULER</span>
+            <h2 id="project-info-title">자를 대기 전에, 크기부터 비교해요.</h2>
+            <p>NoRuler는 제품의 치수를 익숙한 물건과 3D 공간에서 비교하는 오픈소스 프로젝트입니다. 화면 속 크기는 실물 크기가 아닌 물건 간의 비율을 나타냅니다.</p>
+            <div className="project-info-section"><strong>데이터 이용 안내</strong><p>배치와 모델, 설정은 이 브라우저에 저장됩니다. 이미지 분석을 요청하면 선택한 이미지와 입력한 사양이 분석 서버를 거쳐 Google Gemini로 전송됩니다. 배포 환경에 따라 요청 제한과 보안 확인에 IP 주소와 Cloudflare가 사용될 수 있습니다. 개인정보가 담긴 이미지나 텍스트는 입력하지 마세요.</p></div>
+            <div className="project-info-links">
+              <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer"><GithubIcon size={15} /> GitHub 저장소</a>
+              <a href={`${GITHUB_REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">문의 · 문제 제보</a>
+              <a href={`${GITHUB_REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">MIT 라이선스</a>
+            </div>
+            <div className="project-info-version">NoRuler <span className="app-version">{APP_VERSION_LABEL}</span> · © 2026 박준범</div>
+          </section>
+        </div>
+      )}
 
       {help && (
         <div className="help-backdrop" onClick={() => setHelp(false)}>
