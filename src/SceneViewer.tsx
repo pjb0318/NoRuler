@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, Box, Focus, Grid2X2, Maximize2, Minus, Move, Plus, Rotate3D, RotateCcw, Ruler, Tags, TriangleAlert } from 'lucide-react';
+import { ArrowDownToLine, Box, Focus, Grid2X2, Minus, Move, Plus, RotateCcw, Ruler, Tags, TriangleAlert } from 'lucide-react';
 import { ComparisonScene } from './scene';
 import type { MoveState, TransformMode, View } from './scene';
 import type { Unit } from './domain';
@@ -18,7 +18,7 @@ function moveStatusText(moveState: MoveState, mode: TransformMode) {
     return `바닥에서 이동 중${suffix}`;
   }
   if (moveState.placementMessage) return moveState.placementMessage;
-  if (!moveState.selected) return '물건을 클릭해 선택한 뒤 드래그해 옮기세요';
+  if (!moveState.selected) return '물건을 선택해 드래그로 옮기세요';
   if (mode === 'rotate') return '물건이나 초록 고리를 드래그해 회전하세요';
   const heightMm = moveState.heightMm ?? 0;
   if (heightMm >= 0.5) return `바닥에서 ${Math.round(heightMm)} mm 떠 있음 · '바닥에 놓기'로 바로 내릴 수 있어요`;
@@ -110,7 +110,7 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
       </button>)}
     </div>
     {instances.length > 0 && <div className="object-move-bar">
-      <span role="status"><Move size={13} />{moveStatusText(moveState, mode)}</span>
+      <span role="status">{moveStatusText(moveState, mode)}</span>
       <button aria-label="물건 위치 초기화" title="물건의 위치와 회전 초기화" disabled={!moveState.moved} onClick={onReset}><RotateCcw size={12} />위치 초기화</button>
     </div>}
     <div className="viewer-tools">
@@ -122,7 +122,11 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
       <button title="치수 표시" aria-label="치수 표시" aria-pressed={dimensions} onClick={() => onPreferences({ dimensions: !dimensions })}><Ruler size={18} /></button>
       <button title="격자 표시" aria-label="격자 표시" aria-pressed={grid} onClick={() => onPreferences({ grid: !grid })}><Grid2X2 size={18} /></button>
     </div>
-    <div className="viewer-bottom"><span><Rotate3D size={14} />빈 공간 드래그로 회전</span><span><Maximize2 size={13} />스크롤·핀치로 확대</span><span className="pan-hint"><Move size={13} />우클릭 드래그로 화면 이동</span></div>
+    <div className="viewer-bottom">
+      <span>빈 공간 드래그로 회전</span>
+      <span>스크롤·핀치로 확대</span>
+      <span className="pan-hint">우클릭 드래그로 화면 이동</span>
+    </div>
     <div className="grid-caption">격자 한 칸 = 10 cm</div>
   </section>
     {moveState.selected && <div className="move-controls" role="group" aria-label={`${moveState.selected} 조작`}>
@@ -153,9 +157,9 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
           <button type="button" className={isFloating ? 'ground-button is-floating-action' : 'ground-button'} disabled={!isFloating} onClick={() => engine.current?.groundSelected()}><ArrowDownToLine size={13} />바닥에 놓기</button>
           <button type="button" onClick={() => engine.current?.fitSelected()}>선택 맞춤</button>
           <button type="button" onClick={() => setResetError(!!moveState.id && !onResetOne(moveState.id))}>선택 위치 초기화</button>
-          <button type="button" className="deselect-button" aria-label="물건 선택 해제" onClick={() => engine.current?.clearSelection()}>×</button>
         </div>
       </div>
+      <button type="button" className="deselect-button" aria-label="물건 선택 해제" onClick={() => engine.current?.clearSelection()}>×</button>
       {resetError && <p className="pose-error" role="alert">초기 위치에 놓을 공간이 없어요.</p>}
     </div>}
   </div>;

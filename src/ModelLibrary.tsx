@@ -17,14 +17,19 @@ export default function ModelLibrary({ models, unit, onOpen, onRename, onChange,
     {(['history', 'preset'] as const).map(field => {
       const entries = models.filter(model => model[field]);
       return <section key={field}>
-        <h2>{field === 'history' ? '모델 기록' : '내 프리셋'}</h2>
+        <div className="library-section-header">
+          <h2>{field === 'history' ? '모델 기록' : '내 프리셋'}</h2>
+          <span className="library-section-count">{entries.length}</span>
+        </div>
         {!entries.length && <div className="library-empty">
           <p>{field === 'history' ? '3D로 비교한 모델이 여기에 저장돼요.' : '모델 기록에서 프리셋을 등록할 수 있어요.'}</p>
           {field === 'history' && onGoPrepare && <button type="button" className="secondary-action-button" onClick={onGoPrepare}>제품 준비하러 가기</button>}
         </div>}
         {entries.map(model => <article key={model.id}>
-          <strong>{model.name}</strong>
-          <small>{dimensionText(model, unit)}</small>
+          <div className="library-item-header">
+            <strong>{model.name}</strong>
+            <small>{dimensionText(model, unit)}</small>
+          </div>
           {editing === `${field}-${model.id}` && <form onSubmit={event => {
             event.preventDefault();
             if (!draft.trim()) return;
@@ -36,10 +41,12 @@ export default function ModelLibrary({ models, unit, onOpen, onRename, onChange,
             <button type="button" onClick={() => setEditing(null)}>취소</button>
           </form>}
           <div className="library-actions">
-            <button onClick={() => onOpen(model)}>꺼내기</button>
-            <button onClick={() => { setEditing(`${field}-${model.id}`); setDraft(model.name); }}>이름 수정</button>
-            {field === 'history' && !model.preset && <button onClick={() => onChange(model.id, 'preset', true)}>프리셋 등록</button>}
-            <button onClick={() => onChange(model.id, field, false)}>{field === 'history' ? '기록 삭제' : '프리셋 삭제'}</button>
+            <button className="library-action-primary" onClick={() => onOpen(model)}>꺼내기</button>
+            <div className="library-actions-secondary">
+              <button className="library-action-quiet" onClick={() => { setEditing(`${field}-${model.id}`); setDraft(model.name); }}>이름 수정</button>
+              {field === 'history' && !model.preset && <button className="library-action-quiet" onClick={() => onChange(model.id, 'preset', true)}>프리셋 등록</button>}
+              <button className="library-action-quiet" onClick={() => onChange(model.id, field, false)}>{field === 'history' ? '기록 삭제' : '프리셋 삭제'}</button>
+            </div>
           </div>
         </article>)}
       </section>;

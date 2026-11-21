@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, FormEvent } from 'react';
+import type { CSSProperties, FormEvent, TouchEvent } from 'react';
 import {
   ArrowLeft,
-  ArrowRight,
   Bookmark,
   Box,
   ChevronDown,
+  ChevronUp,
   CircleHelp,
   Copy,
   File,
@@ -46,6 +46,8 @@ import type { CameraState, Preferences, ThemeMode, Workspace } from './storage';
 
 type PanelId = 'add' | 'presets' | 'objects' | 'library';
 
+const MOBILE_MEDIA = '(max-width: 900px)';
+
 const panelTitles: Record<PanelId, string> = {
   add: '제품 추가',
   presets: '익숙한 물건 프리셋',
@@ -76,7 +78,24 @@ const makeDraft = (d: Dimensions, unit: Unit) => Object.fromEntries(AXES.map(axi
 export default function App() {
   const [initial] = useState(readWorkspace);
   const [activePanel, setActivePanel] = useState<PanelId>('add');
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' && !!window.matchMedia?.(MOBILE_MEDIA).matches,
+  );
+  const [drawerOpen, setDrawerOpen] = useState(() =>
+    typeof window === 'undefined' ? true : !window.matchMedia?.(MOBILE_MEDIA).matches,
+  );
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const sheetDragStartY = useRef<number | null>(null);
+  useEffect(() => {
+    const query = window.matchMedia?.(MOBILE_MEDIA);
+    if (!query) return;
+    const onChange = (event: MediaQueryListEvent) => {
+      setIsMobile(event.matches);
+      setSheetExpanded(false);
+    };
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
   const [inputMode, setInputMode] = useState<'image' | 'manual'>('image');
   const [imageSession, setImageSession] = useState<{ active: boolean; showForm: boolean }>({ active: false, showForm: false });
   const [toast, setToast] = useState('');
@@ -184,10 +203,34 @@ export default function App() {
   function selectPanel(id: PanelId) {
     if (drawerOpen && activePanel === id) {
       setDrawerOpen(false);
+      setSheetExpanded(false);
       return;
     }
     setActivePanel(id);
     setDrawerOpen(true);
+    setSheetExpanded(false);
+  }
+
+  function closeDrawer() {
+    setDrawerOpen(false);
+    setSheetExpanded(false);
+  }
+
+  function onSheetTouchStart(event: TouchEvent) {
+    if (!isMobile || event.touches.length !== 1) return;
+    sheetDragStartY.current = event.touches[0].clientY;
+  }
+
+  function onSheetTouchEnd(event: TouchEvent) {
+    const startY = sheetDragStartY.current;
+    sheetDragStartY.current = null;
+    if (!isMobile || startY === null || !event.changedTouches.length) return;
+    const deltaY = event.changedTouches[0].clientY - startY;
+    if (deltaY < -36) setSheetExpanded(true);
+    else if (deltaY > 36) {
+      if (sheetExpanded) setSheetExpanded(false);
+      else setDrawerOpen(false);
+    }
   }
 
   function save() {
@@ -385,6 +428,7 @@ export default function App() {
       setStatus(msg);
       setToast(msg);
       setActivePanel('objects');
+      setSheetExpanded(false);
       return;
     }
     const existing = library.find(model => model.name === name.trim() &&
@@ -409,6 +453,7 @@ export default function App() {
     const msg = deskShape ? '책상 모델을 비교 공간에 추가했어요.' : parametricShape ? '3D 모델을 비교 공간에 추가했어요.' : '입력한 크기를 3D 공간에 반영했어요.';
     setStatus(msg);
     setToast(msg);
+    if (isMobile) closeDrawer();
   }
 
   function openModel(model: SavedModel) {
@@ -441,6 +486,7 @@ export default function App() {
     setDraft(makeDraft(item.snapshot, unit));
     setActivePanel('add');
     setDrawerOpen(true);
+    setSheetExpanded(false);
   }
 
   function commitPose(id: string, pose: Pose) {
@@ -558,7 +604,7 @@ export default function App() {
               type="button"
               className="sidebar-toggle-button"
               aria-expanded={drawerOpen}
-              onClick={() => setDrawerOpen(value => !value)}
+              onClick={() => (drawerOpen ? closeDrawer() : setDrawerOpen(true))}
             >
               {drawerOpen ? <><PanelLeftClose size={16} />사이드바 접기</> : <><PanelLeftOpen size={16} />사이드바 열기</>}
             </button>
@@ -573,10 +619,10 @@ export default function App() {
               onClick={toggleTheme}
             >
               {resolvedTheme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-              <span>{resolvedTheme === 'dark' ? '라이트' : '다크'}</span>
+              <span className="header-button-label">{resolvedTheme === 'dark' ? '라이트' : '다크'}</span>
             </button>
-            <button className="help-button" onClick={() => setHelp(v => !v)} aria-expanded={help}>
-              <CircleHelp size={16} />사용 방법
+            <button type="button" className="help-button" aria-label="사용 방법" onClick={() => setHelp(v => !v)} aria-expanded={help}>
+              <CircleHelp size={16} /><span className="header-button-label">사용 방법</span>
             </button>
           </div>
         </div>
@@ -624,20 +670,49 @@ export default function App() {
           </button>
         </nav>
 
-        <aside className="studio-drawer" aria-label="도구 패널" hidden={!drawerOpen}>
-          <div className="drawer-header">
+        {isMobile && drawerOpen && sheetExpanded && (
+          <div className="sheet-scrim" aria-hidden="true" onClick={() => setSheetExpanded(false)} />
+        )}
+
+        <aside
+          className={sheetExpanded ? 'studio-drawer is-expanded' : 'studio-drawer'}
+          data-panel={activePanel}
+          aria-label="도구 패널"
+          hidden={!drawerOpen}
+        >
+          <div
+            className="sheet-grab-area"
+            aria-hidden="true"
+            onTouchStart={onSheetTouchStart}
+            onTouchEnd={onSheetTouchEnd}
+            onClick={() => setSheetExpanded(value => !value)}
+          >
+            <span className="sheet-handle-pill" />
+          </div>
+          <div className="drawer-header" onTouchStart={onSheetTouchStart} onTouchEnd={onSheetTouchEnd}>
             <div className="drawer-title">
               <h2>{editing && activePanel === 'add' ? '치수 수정' : panelTitles[activePanel]}</h2>
               {!editing && activePanel === 'objects' && <span className="count-badge">{instances.length}</span>}
             </div>
-            <button
-              type="button"
-              className="drawer-close-button"
-              aria-label="패널 닫기"
-              onClick={() => setDrawerOpen(false)}
-            >
-              <X size={16} />
-            </button>
+            <div className="drawer-header-actions">
+              <button
+                type="button"
+                className="sheet-expand-button"
+                aria-label={sheetExpanded ? '패널 기본 크기로' : '패널 크게 보기'}
+                aria-expanded={sheetExpanded}
+                onClick={() => setSheetExpanded(value => !value)}
+              >
+                {sheetExpanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              </button>
+              <button
+                type="button"
+                className="drawer-close-button"
+                aria-label="패널 닫기"
+                onClick={closeDrawer}
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           <div className="drawer-body">
@@ -675,7 +750,7 @@ export default function App() {
                     {error && <p id="input-error" className="input-error" role="alert">{error}</p>}
                     <div className="drawer-submit-stack">
                       <button className="primary-button" type="submit">
-                        <Box size={17} />치수 수정 적용<ArrowRight size={17} />
+                        치수 수정 적용
                       </button>
                       <button type="button" className="secondary-action-button save-edited-model" onClick={() => saveEditedModel(editing)}>
                         현재 치수를 새 모델로 저장
@@ -814,7 +889,7 @@ export default function App() {
                             <text x="89" y="47" fill="var(--accent)" fontSize="10" fontFamily="IBM Plex Mono, monospace">H</text>
                             <text x="70" y="69" fill="var(--accent)" fontSize="10" fontFamily="IBM Plex Mono, monospace">D</text>
                           </svg>
-                          <p>상세 페이지의 치수를 입력하면 오른쪽 3D 공간에 바로 놓여요.</p>
+                          <p>상세 페이지의 치수를 입력하면 3D 비교 공간에 바로 놓여요.</p>
                         </div>
                       )}
 
@@ -822,9 +897,7 @@ export default function App() {
 
                       <div className="drawer-submit-stack">
                         <button className="primary-button" type="submit" disabled={!!draftShape && !reviewedDimensions}>
-                          <Box size={17} />
                           {deskShape ? '책상을 비교 공간에 추가' : parametricShape ? '3D 모델을 비교 공간에 추가' : '3D로 크기 비교하기'}
-                          <ArrowRight size={17} />
                         </button>
                         <p className="form-helper-note">
                           {deskShape
@@ -842,7 +915,7 @@ export default function App() {
 
             {activePanel === 'presets' && (
               <div className="drawer-panel">
-                <p className="drawer-subtitle">클릭하면 오른쪽 3D 비교 공간에 바로 놓여요.</p>
+                <p className="drawer-subtitle">선택하면 3D 비교 공간에 바로 놓여요.</p>
                 <div className="preset-grid">
                   {PRESETS.map(preset => {
                     const count = instances.filter(item => item.shape === preset.id).length;
@@ -856,9 +929,18 @@ export default function App() {
                           setToast(`${preset.name}을 공간에 추가했어요.`);
                         }}
                       >
-                        <PresetIcon id={preset.id} />
-                        <strong>{preset.name}</strong>
-                        <small>{count ? `공간에 ${count}개 · 추가` : '공간에 추가'}</small>
+                        <span className="preset-card-icon" aria-hidden="true">
+                          <PresetIcon id={preset.id} size={18} />
+                        </span>
+                        <span className="preset-card-info">
+                          <span className="preset-card-title">
+                            <strong>{preset.name}</strong>
+                            {count > 0 && <span className="preset-count">{count}</span>}
+                          </span>
+                          <span className="preset-card-detail">{preset.detail}</span>
+                          <small className="preset-card-dims">{dimensionText(preset, unit)}</small>
+                        </span>
+                        <span className="preset-card-add" aria-hidden="true"><Plus size={14} /></span>
                       </button>
                     );
                   })}
@@ -978,7 +1060,7 @@ export default function App() {
             onReset={() => { setInstances(resetLayout); setResetKey(value => value + 1); }}
           />
           <div className="studio-footer">
-            <span>NoRuler · 자의 빈자리를 채우다</span>
+            <span>1:1 실제 치수 비율 기준</span>
             <span>실제 치수 비율로 비교합니다. 화면에 보이는 크기가 실물 크기는 아니에요.</span>
           </div>
         </section>
@@ -995,12 +1077,12 @@ export default function App() {
             <h2>3D 크기 비교 방법</h2>
             <ol>
               <li>
-                <strong>왼쪽 ‘제품 추가’ 패널에서 치수를 준비하세요.</strong>
-                <p>사진·도면에서 치수와 3D 초안을 읽어 오거나, 가로·깊이·높이를 직접 입력하면 오른쪽 3D 공간에 바로 놓여요.</p>
+                <strong>‘제품 추가’ 패널에서 치수를 준비하세요.</strong>
+                <p>사진·도면에서 치수와 3D 초안을 읽어 오거나, 가로·깊이·높이를 직접 입력하면 3D 공간에 바로 놓여요.</p>
               </li>
               <li>
                 <strong>‘프리셋’·‘놓인 물건’·‘내 모델’ 탭으로 주제를 전환하세요.</strong>
-                <p>필요한 패널만 열어 비교 대상을 추가·수정하고, ‘사이드바 접기’를 눌러 3D 비교 공간을 넓게 볼 수도 있어요.</p>
+                <p>필요한 패널만 열어 비교 대상을 추가·수정하고, 패널을 닫아 3D 비교 공간을 넓게 볼 수도 있어요.</p>
               </li>
               <li>
                 <strong>돌려 보고, 가까이 보세요.</strong>
@@ -1008,7 +1090,7 @@ export default function App() {
               </li>
             </ol>
             <p className="help-footnote"><Info size={16} />물건끼리 실제 치수 비율로 비교해요. 제품 치수는 최대 {formatNumber(10000)} mm까지 입력할 수 있어요.</p>
-            <button className="primary-button" onClick={() => setHelp(false)}>비교 시작하기<ChevronDown size={17} /></button>
+            <button className="primary-button" onClick={() => setHelp(false)}>비교 시작하기</button>
           </section>
         </div>
       )}

@@ -301,12 +301,14 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
             <span>클릭해서 선택 · 끌어다 놓기 · 캡처 붙여넣기 (⌘V)</span>
             <small>8 MB 이하 PNG · JPG · WebP</small>
           </label>
-          <div className="entry-divider"><span>또는</span></div>
           <div className="entry-example-bar">
+            <div className="entry-example-copy">
+              <strong>책상 예시 도면 체험</strong>
+              <span>API 키 없이 도면 검토와 3D 초안 확인</span>
+            </div>
             <button type="button" className="secondary-action-button" onClick={startExample}>
               <FileText size={15} />예시 도면 써보기
             </button>
-            <span>API 키 없이 책상 예시 도면과 3D 초안 체험</span>
           </div>
           {error && <p className="input-error" role="alert">{error}</p>}
         </div>

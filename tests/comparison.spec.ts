@@ -730,3 +730,107 @@ test('switches between Catppuccin Latte and Mocha themes with persistence and ic
   await expect(shell).not.toHaveClass(/is-collapsed/);
   await expect(drawer).toBeVisible();
 });
+
+test('renders a mobile bottom-sheet app shell with zero horizontal overflow across narrow phone viewports', async ({ browser }) => {
+  for (const viewport of [{ width: 360, height: 740 }, { width: 390, height: 844 }]) {
+    const context = await browser.newContext({ hasTouch: true, viewport });
+    try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto('/');
+      await expect(page.locator('.scene canvas')).toBeVisible();
+
+      const button = (name: string) => page.getByRole('button', { name, exact: true });
+      const assertNoOverflow = async () => {
+        const metrics = await page.evaluate(() => ({
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        }));
+        expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth);
+      };
+
+      await assertNoOverflow();
+      await expect(page.locator('.sidebar-toggle-button')).toBeHidden();
+
+      for (const selector of ['.theme-toggle-button', '.help-button']) {
+        const box = await page.locator(selector).boundingBox();
+        expect(box).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width + 1);
+      }
+
+      const drawer = page.locator('.studio-drawer');
+      await expect(drawer).toBeHidden();
+
+      const stageBox = (await page.locator('.studio-stage').boundingBox())!;
+      const rail = page.locator('.studio-rail');
+      const railBox = (await rail.boundingBox())!;
+      expect(stageBox.y + stageBox.height).toBeLessThanOrEqual(railBox.y + 1);
+      expect(railBox.y + railBox.height).toBeLessThanOrEqual(viewport.height + 1);
+
+      const labelBoxes = await rail.locator('.rail-label').evaluateAll(nodes =>
+        nodes.map(node => node.getBoundingClientRect().width),
+      );
+      expect(labelBoxes).toHaveLength(4);
+      for (const width of labelBoxes) {
+        expect(width).toBeGreaterThan(10);
+      }
+
+      const viewerBox = (await page.locator('.viewer').boundingBox())!;
+      for (const selector of ['.view-switch', '.object-move-bar', '.scale-badge', '.grid-caption', '.viewer-tools']) {
+        const hudBox = (await page.locator(selector).boundingBox())!;
+        expect(hudBox.x).toBeGreaterThanOrEqual(viewerBox.x - 1);
+        expect(hudBox.y).toBeGreaterThanOrEqual(viewerBox.y - 1);
+        expect(hudBox.x + hudBox.width).toBeLessThanOrEqual(viewerBox.x + viewerBox.width + 1);
+        expect(hudBox.y + hudBox.height).toBeLessThanOrEqual(viewerBox.y + viewerBox.height + 1);
+      }
+      const captionBox = (await page.locator('.grid-caption').boundingBox())!;
+      const toolsBox = (await page.locator('.viewer-tools').boundingBox())!;
+      expect(captionBox.x + captionBox.width).toBeLessThanOrEqual(toolsBox.x + 1);
+
+      await button('제품 추가').click();
+      await expect(drawer).toBeVisible();
+      await assertNoOverflow();
+
+      await button('패널 크게 보기').click();
+      await expect(drawer).toHaveClass(/is-expanded/);
+      await assertNoOverflow();
+      await button('패널 기본 크기로').click();
+      await expect(drawer).not.toHaveClass(/is-expanded/);
+      await assertNoOverflow();
+
+      await button('치수 직접 입력').click();
+      await page.getByLabel('제품명', { exact: true }).fill('모바일 수납함');
+      await button('3D로 크기 비교하기').click();
+      await expect(drawer).toBeHidden();
+      await assertNoOverflow();
+
+      await button('프리셋').click();
+      await expect(drawer).toBeVisible();
+      await assertNoOverflow();
+
+      await button('놓인 물건').click();
+      await expect(drawer).toBeVisible();
+      await assertNoOverflow();
+
+      await button('모바일 수납함 선택').click();
+      const moveControls = page.locator('.move-controls');
+      await expect(moveControls).toBeVisible();
+      const moveControlsBox = (await moveControls.boundingBox())!;
+      expect(moveControlsBox.x).toBeGreaterThanOrEqual(0);
+      expect(moveControlsBox.x + moveControlsBox.width).toBeLessThanOrEqual(viewport.width + 1);
+      await assertNoOverflow();
+
+      await button('내 모델').click();
+      await expect(drawer).toBeVisible();
+      await assertNoOverflow();
+      await button('패널 크게 보기').click();
+      await assertNoOverflow();
+
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close();
+    }
+  }
+});
