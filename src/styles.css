@@ -605,6 +605,13 @@ h1, h2, h3, p { margin: 0; }
   font-weight: 600;
   color: var(--ink);
 }
+.turnstile-slot {
+  display: flex;
+  justify-content: flex-start;
+}
+.turnstile-slot:empty {
+  display: none;
+}
 .review-stage-grid {
   display: grid;
   grid-template-columns: 1fr;

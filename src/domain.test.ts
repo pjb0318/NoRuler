@@ -16,6 +16,7 @@ import {
 } from './placement.ts';
 import { addInstance, changeScene, initialInstances, stepScene } from './workspace.ts';
 import { readWorkspace, writeWorkspace } from './storage.ts';
+import { computeResizeDimensions } from './imageUpload.ts';
 
 test('cm and mm produce exactly the same physical dimensions', () => {
   assert.deepEqual(parseDimensions({ width: '24', depth: '18', height: '16' }, 'cm'), { width: 240, depth: 180, height: 160 });
@@ -506,4 +507,24 @@ test('persists explicit theme preference while keeping unthemed workspaces compa
     if (priorStorage) Object.defineProperty(globalThis, 'localStorage', priorStorage);
     else Reflect.deleteProperty(globalThis, 'localStorage');
   }
+});
+
+test('computeResizeDimensions shrinks 12MP photos while preserving desktop and tall spec screenshots', () => {
+  const phone = computeResizeDimensions(4032, 3024);
+  assert.equal(phone.resized, true);
+  assert.ok(phone.width * phone.height <= 2_405_000);
+  assert.ok(Math.abs(phone.width / phone.height - 4032 / 3024) < 0.01);
+
+  const desktop = computeResizeDimensions(1920, 1080);
+  assert.deepEqual(desktop, { width: 1920, height: 1080, resized: false });
+
+  const tallSpec = computeResizeDimensions(860, 2200);
+  assert.deepEqual(tallSpec, { width: 860, height: 2200, resized: false });
+
+  const veryTallSpec = computeResizeDimensions(860, 3000);
+  assert.equal(veryTallSpec.resized, true);
+  assert.ok(veryTallSpec.width >= 820 && veryTallSpec.height >= 2850);
+
+  const diagram = computeResizeDimensions(800, 600);
+  assert.deepEqual(diagram, { width: 800, height: 600, resized: false });
 });

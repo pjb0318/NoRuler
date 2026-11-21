@@ -6,6 +6,9 @@ import MeasurementReview from './MeasurementReview';
 import ProductRegion from './ProductRegion';
 import type { Region } from './ProductRegion';
 import { exampleAnalysis, imageSizeLimit, imageTypes, specTextLimit, suggestedSpecRow } from './imageDimensions';
+import { prepareUploadImage } from './imageUpload';
+import { mountTurnstile, turnstileSiteKey } from './turnstile';
+import type { TurnstileController } from './turnstile';
 import type { ReactNode } from 'react';
 import type { ImageAnalysis, ImageSubject, Measurement, SizeCandidate, SpecRow } from './imageDimensions';
 
@@ -13,12 +16,13 @@ export type ImageChoice = { id: string; candidate: SizeCandidate; subject?: Imag
 
 const analysisFailure = '이미지를 분석하지 못했어요. 다시 시도하거나 치수를 직접 입력해 주세요.';
 
-export default function ImageInput({ onRead, onMeasurements, onBack, onSessionChange, review }: {
+export default function ImageInput({ onRead, onMeasurements, onBack, onSessionChange, review, theme = 'light' }: {
   onRead: (result: ImageChoice | null, reset?: boolean) => void;
   onMeasurements: (measurements: Measurement[]) => void;
   onBack: () => void;
   onSessionChange?: (state: { active: boolean; showForm: boolean }) => void;
   review: ReactNode;
+  theme?: 'light' | 'dark';
 }) {
   const [file, setFile] = useState<File>();
   const [preview, setPreview] = useState('');
@@ -50,8 +54,24 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
   const [zoom, setZoom] = useState(1);
   const dialog = useRef<HTMLDialogElement>(null);
   const request = useRef<AbortController | null>(null);
+  const turnstileContainer = useRef<HTMLDivElement>(null);
+  const turnstile = useRef<TurnstileController | null>(null);
   const sessionCallback = useRef(onSessionChange);
   sessionCallback.current = onSessionChange;
+
+  useEffect(() => {
+    if (!turnstileSiteKey || !file || !turnstileContainer.current) {
+      turnstile.current?.destroy();
+      turnstile.current = null;
+      return;
+    }
+    const controller = mountTurnstile(turnstileContainer.current, turnstileSiteKey, theme);
+    turnstile.current = controller;
+    return () => {
+      controller.destroy();
+      if (turnstile.current === controller) turnstile.current = null;
+    };
+  }, [file, theme]);
 
   useEffect(() => {
     if (!file) { setPreview(''); return; }
@@ -155,16 +175,41 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
       setSelectedCandidate(null);
       onRead(null, true);
     }
+    let usedTurnstile = false;
     try {
-      let body: File | FormData = file!;
+      let turnstileToken = '';
+      if (turnstileSiteKey && turnstile.current) {
+        try {
+          turnstileToken = await turnstile.current.getToken(controller.signal);
+        } catch (turnstileError) {
+          if (!controller.signal.aborted) {
+            setError(turnstileError instanceof Error && turnstileError.message
+              ? turnstileError.message
+              : '자동 요청 방지 확인을 완료하지 못했어요. 광고 차단기를 확인하거나 치수를 직접 입력해 주세요.');
+          }
+          return;
+        }
+        if (controller.signal.aborted) return;
+      }
+
+      const uploadFile = !specOnly && file ? await prepareUploadImage(file) : undefined;
+      if (controller.signal.aborted) return;
+      const uploadSpecFile = specFile ? await prepareUploadImage(specFile) : undefined;
+      if (controller.signal.aborted) return;
+
+      let body: File | FormData = uploadFile!;
       if (hasSpec) {
         body = new FormData();
-        if (!specOnly && file) body.set('photo', file);
-        if (specFile) body.set('spec-image', specFile);
+        if (!specOnly && uploadFile) body.set('photo', uploadFile);
+        if (uploadSpecFile) body.set('spec-image', uploadSpecFile);
         if (specText.trim()) body.set('spec-text', specText.trim());
       }
+      if (turnstileToken) usedTurnstile = true;
       const response = await fetch('/api/image-dimensions', {
-        method: 'POST', body, signal: controller.signal,
+        method: 'POST',
+        body,
+        ...(turnstileToken ? { headers: { 'X-Turnstile-Token': turnstileToken } } : {}),
+        signal: controller.signal,
       });
       const result = await response.json().catch(() => null);
       if (controller.signal.aborted) return;
@@ -189,6 +234,7 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
     } catch {
       if (!controller.signal.aborted) setError(analysisFailure);
     } finally {
+      if (usedTurnstile) turnstile.current?.reset();
       if (!controller.signal.aborted) setPending(false);
     }
   }
@@ -294,6 +340,8 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
               </div>
             )}
           </div>
+
+          {turnstileSiteKey && file && <div className="turnstile-slot" ref={turnstileContainer} />}
 
           <div className="review-stage-grid">
             <div className="review-source-card">

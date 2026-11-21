@@ -6,3 +6,6 @@ playwright-report/
 .DS_Store
 .env.local
 .env.*.local
+
+# 개인 참고 자료
+/우수작 readme 모음/

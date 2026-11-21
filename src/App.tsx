@@ -714,6 +714,7 @@ export default function App() {
                       onMeasurements={applyMeasurements}
                       onBack={exitImageInput}
                       onSessionChange={setImageSession}
+                      theme={resolvedTheme}
                       review={draftShape ? (
                         <DeskPreview
                           dimensions={previewDimensions}
