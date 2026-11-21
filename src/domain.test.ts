@@ -1,11 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Box3, Vector3 } from 'three';
+import { Box3, LineSegments, Mesh, MeshStandardMaterial, Vector3 } from 'three';
 import { AXES, DEFAULT_PRODUCT, PRESETS, WORLD_SCALE, displayValue, parseDimensions, sceneLayout } from './domain.ts';
 import { createModel } from './scene.ts';
 import { makeDeskShape } from './deskModel.ts';
-import { deskParts, exampleAnalysis, normalizeImageAnalysis, supportsDesk } from './imageDimensions.ts';
-import { resolvePlacement } from './placement.ts';
+import { getModelAccent } from './modelPalette.ts';
+import { deskParts, exampleAnalysis, normalizeImageAnalysis, supportsDesk, supportsParametric } from './imageDimensions.ts';
+import { parametricPreviewDimensions, readParametricShape } from './parametricModel.ts';
+import {
+  findSupportTopY,
+  isRestingOnSupport,
+  resolveFloorSnap,
+  resolveHorizontalAlignment,
+  resolvePlacement,
+} from './placement.ts';
 import { addInstance, changeScene, initialInstances, stepScene } from './workspace.ts';
 import { readWorkspace, writeWorkspace } from './storage.ts';
 
@@ -248,5 +256,254 @@ test('built-in desk example provides three ready desk options with verified prov
       assert.equal(option.dimensions[axis].needsReview, false);
       assert.equal(option.dimensions[axis].measurements?.length, 2);
     }
+  }
+});
+
+test('parametric builders keep exact exterior bounds across box-parts, lathe, and extrude planes', () => {
+  const boxParts = readParametricShape({
+    builder: 'box-parts',
+    ratio: { width: 5, depth: 2, height: 1 },
+    parts: [
+      { kind: 'box', x0: 0, x1: 1, y0: 0.72, y1: 1, z0: 0, z1: 1, color: '#456', radius: 0.2 },
+      { kind: 'cylinder', x0: 0.05, x1: 0.17, y0: 0, y1: 0.72, z0: 0.1, z1: 0.9, color: '#2b394e', radius: 0 },
+      { kind: 'cylinder', x0: 0.83, x1: 0.95, y0: 0, y1: 0.72, z0: 0.1, z1: 0.9, color: '#2b394e', radius: 0 },
+    ],
+  });
+  const lathe = readParametricShape({
+    builder: 'lathe',
+    color: '#9ad3c8',
+    ratio: { width: 1, depth: 1.2, height: 3 },
+    profile: [{ r: 0.35, y: 0 }, { r: 0.5, y: 0.08 }, { r: 0.5, y: 0.7 }, { r: 0.22, y: 0.88 }, { r: 0.22, y: 1 }],
+  });
+  const extrudes = (['front', 'side', 'top'] as const).map(plane => readParametricShape({
+    builder: 'extrude',
+    color: '#6b94ee',
+    plane,
+    ratio: { width: 130, depth: 50, height: 35 },
+    points: [
+      { u: 0, v: 0 }, { u: 1, v: 0 }, { u: 1, v: 1 }, { u: 0.55, v: 1 },
+      { u: 0.55, v: 0.4 }, { u: 0.25, v: 0.4 }, { u: 0.25, v: 0.63 }, { u: 0, v: 0.63 },
+    ],
+  }));
+  assert.ok(boxParts && lathe && extrudes.every(Boolean));
+
+  const cases = [
+    { shape: boxParts!, dims: { width: 500, depth: 200, height: 82 } },
+    { shape: lathe!, dims: { width: 65, depth: 65, height: 210 } },
+    { shape: lathe!, dims: { width: 80, depth: 60, height: 210 } },
+    ...extrudes.map(shape => ({ shape: shape!, dims: { width: 130, depth: 50, height: 35 } })),
+  ];
+  for (const { shape, dims } of cases) {
+    for (const frontFlipped of [false, true]) {
+      const model = createModel({ ...dims, parametricShape: { ...shape, frontFlipped } });
+      const bounds = new Box3().setFromObject(model, true);
+      const size = bounds.getSize(new Vector3()).multiplyScalar(1 / WORLD_SCALE);
+      const center = bounds.getCenter(new Vector3());
+      assert.ok(Math.abs(size.x - dims.width) < 1e-3, `${shape.kind} width ${size.x} vs ${dims.width}`);
+      assert.ok(Math.abs(size.y - dims.height) < 1e-3, `${shape.kind} height ${size.y} vs ${dims.height}`);
+      assert.ok(Math.abs(size.z - dims.depth) < 1e-3, `${shape.kind} depth ${size.z} vs ${dims.depth}`);
+      assert.ok(Math.abs(center.x) < 1e-5);
+      assert.ok(Math.abs(center.z) < 1e-5);
+      assert.ok(Math.abs(bounds.min.y) < 1e-5);
+      assert.ok(Math.abs(model.children[0].rotation.y - (frontFlipped ? Math.PI : 0)) < 1e-6);
+    }
+  }
+});
+
+test('image analysis accepts valid parametric shapes, drops invalid geometry, and computes preview ratios', () => {
+  const validParametric = {
+    builder: 'extrude',
+    color: '#3a6',
+    plane: 'front',
+    ratio: { width: 13, depth: 5, height: 3.5 },
+    points: [{ u: 0, v: 0 }, { u: 1, v: 0 }, { u: 1, v: 1 }, { u: 0, v: 0.6 }],
+  };
+  const selfIntersecting = {
+    builder: 'extrude',
+    color: '#3a6',
+    plane: 'front',
+    ratio: { width: 1, depth: 1, height: 1 },
+    points: [{ u: 0, v: 0 }, { u: 1, v: 1 }, { u: 1, v: 0 }, { u: 0, v: 1 }],
+  };
+  const result = normalizeImageAnalysis({
+    subjects: [
+      { label: '유효 모델', shapeEvidence: { readiness: 'ready', kind: 'other', parametric: validParametric } },
+      { label: '교차 폴리곤', shapeEvidence: { readiness: 'ready', kind: 'other', parametric: selfIntersecting } },
+      { label: '각도 부족', shapeEvidence: { readiness: 'needs_view', kind: 'other', parametric: validParametric } },
+      { label: '책상 우선', shapeEvidence: { readiness: 'ready', kind: 'cross-braced-desk', parts: deskParts, parametric: validParametric } },
+    ],
+  });
+  assert.ok(supportsParametric(result.subjects[0].shapeEvidence));
+  assert.equal(result.subjects[0].shapeEvidence?.parametric?.kind, 'extrude-v1');
+  if (result.subjects[0].shapeEvidence?.parametric?.kind === 'extrude-v1') {
+    assert.equal(result.subjects[0].shapeEvidence.parametric.color, '#33aa66');
+  }
+  assert.ok(!supportsParametric(result.subjects[1].shapeEvidence));
+  assert.ok(!supportsParametric(result.subjects[2].shapeEvidence));
+  assert.ok(!supportsParametric(result.subjects[3].shapeEvidence));
+
+  const shape = result.subjects[0].shapeEvidence!.parametric!;
+  assert.deepEqual(
+    parametricPreviewDimensions(shape, { width: '260', depth: '', height: '' }, 'mm'),
+    { width: 260, depth: 100, height: 70 },
+  );
+  const blankPreview = parametricPreviewDimensions(shape, { width: '', depth: '', height: '' }, 'mm');
+  assert.equal(blankPreview.width, 300);
+  assert.ok(Math.abs(blankPreview.depth - 300 * (5 / 13)) < 1e-9);
+  assert.ok(Math.abs(blankPreview.height - 300 * (3.5 / 13)) < 1e-9);
+});
+
+test('restores and deep-clones parametric shapes across v3 workspace storage and duplication', () => {
+  const values = new Map<string, string>();
+  const priorStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value) },
+  });
+  try {
+    const base = readWorkspace();
+    const parametricShape = readParametricShape({
+      builder: 'box-parts',
+      frontFlipped: true,
+      ratio: { width: 5, depth: 2, height: 1 },
+      parts: [{ kind: 'box', x0: 0, x1: 1, y0: 0, y1: 1, z0: 0, z1: 1, color: '#557799', radius: 0 }],
+    })!;
+    const stand = {
+      name: '모니터 받침대',
+      width: 500,
+      depth: 200,
+      height: 82,
+      parametricShape,
+      id: 'custom-stand' as const,
+      history: true,
+      preset: false,
+    };
+    const instances = addInstance(addInstance(base.instances, stand, stand.id), stand, stand.id);
+    const firstShape = instances.at(-2)?.snapshot.parametricShape;
+    const secondShape = instances.at(-1)?.snapshot.parametricShape;
+    assert.notEqual(secondShape, firstShape);
+    if (firstShape?.kind === 'box-parts-v1' && secondShape?.kind === 'box-parts-v1') {
+      assert.notEqual(secondShape.parts, firstShape.parts);
+    }
+    const expected = { ...base, instances, library: [stand] };
+    writeWorkspace(expected);
+    assert.deepEqual(readWorkspace(), expected);
+  } finally {
+    if (priorStorage) Object.defineProperty(globalThis, 'localStorage', priorStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
+});
+
+test('assigns distinct accent colors and edge outlines while preserving exact exterior bounds', () => {
+  const accent0 = getModelAccent(0);
+  const accent1 = getModelAccent(1);
+  const firstColorHex = (root: ReturnType<typeof createModel>) => {
+    let hex = '';
+    root.traverse(obj => {
+      if (!hex && obj instanceof Mesh && obj.material instanceof MeshStandardMaterial) {
+        hex = obj.material.color.getHexString();
+      }
+    });
+    return hex;
+  };
+  const edgeCount = (root: ReturnType<typeof createModel>) => {
+    let count = 0;
+    root.traverse(obj => { if (obj instanceof LineSegments) count += 1; });
+    return count;
+  };
+  const expectSize = (root: ReturnType<typeof createModel>, expected: [number, number, number]) => {
+    const size = new Box3().setFromObject(root, true).getSize(new Vector3()).multiplyScalar(1 / WORLD_SCALE);
+    expected.forEach((mm, idx) => {
+      assert.ok(Math.abs(size.getComponent(idx) - mm) < 1e-3, `axis ${idx}: ${size.getComponent(idx)} vs ${mm}`);
+    });
+  };
+
+  const desk = { width: 800, depth: 500, height: 740, deskShape: makeDeskShape(700, 740) };
+  const desk0 = createModel(desk, undefined, accent0);
+  const desk1 = createModel(desk, undefined, accent1);
+  assert.notEqual(firstColorHex(desk0), firstColorHex(desk1));
+  assert.ok(edgeCount(desk0) > 0 && edgeCount(desk1) > 0);
+  expectSize(desk0, [800, 740, 500]);
+  expectSize(desk1, [800, 740, 500]);
+
+  const box0 = createModel(DEFAULT_PRODUCT, undefined, accent0);
+  const box1 = createModel(DEFAULT_PRODUCT, undefined, accent1);
+  assert.notEqual(firstColorHex(box0), firstColorHex(box1));
+  assert.ok(edgeCount(box0) > 0 && edgeCount(box1) > 0);
+  expectSize(box0, [DEFAULT_PRODUCT.width, DEFAULT_PRODUCT.height, DEFAULT_PRODUCT.depth]);
+
+  const whiteParametric = readParametricShape({
+    builder: 'box-parts',
+    ratio: { width: 3, depth: 2, height: 1 },
+    parts: [{ kind: 'box', x0: 0, x1: 1, y0: 0, y1: 1, z0: 0, z1: 1, color: '#ffffff', radius: 0.1 }],
+  })!;
+  const param0 = createModel({ width: 300, depth: 200, height: 100, parametricShape: whiteParametric }, undefined, accent0);
+  const param1 = createModel({ width: 300, depth: 200, height: 100, parametricShape: whiteParametric }, undefined, accent1);
+  assert.notEqual(firstColorHex(param0), 'ffffff');
+  assert.notEqual(firstColorHex(param0), firstColorHex(param1));
+  assert.ok(edgeCount(param0) > 0 && edgeCount(param1) > 0);
+  expectSize(param0, [300, 100, 200]);
+  expectSize(param1, [300, 100, 200]);
+});
+
+test('resolves floor snapping, support detection, and horizontal edge alignment', () => {
+  const obstacle = new Box3(new Vector3(0, 0, 0), new Vector3(4, 2, 4));
+  const floatingClear = new Box3(new Vector3(5, 0.15, 0), new Vector3(7, 1.15, 2));
+  assert.equal(resolveFloorSnap(floatingClear, [obstacle], 0.2), -0.15);
+  assert.equal(resolveFloorSnap(floatingClear, [obstacle], 0.1), null);
+
+  const tooHigh = new Box3(new Vector3(5, 0.5, 0), new Vector3(7, 1.5, 2));
+  assert.equal(resolveFloorSnap(tooHigh, [obstacle], 0.2), null);
+
+  const blockedAtFloor = new Box3(new Vector3(1, 2.05, 1), new Vector3(3, 3.05, 3));
+  assert.equal(resolveFloorSnap(blockedAtFloor, [obstacle], 0.2), null);
+
+  const onTop = new Box3(new Vector3(1, 2, 1), new Vector3(3, 3, 3));
+  assert.equal(isRestingOnSupport(onTop, [obstacle], 0.02), true);
+  assert.equal(findSupportTopY(onTop, [obstacle], 2.2), 2);
+
+  const slidOff = new Box3(new Vector3(4.2, 2, 1), new Vector3(6.2, 3, 3));
+  assert.equal(isRestingOnSupport(slidOff, [obstacle], 0.02), false);
+  assert.equal(findSupportTopY(slidOff, [obstacle], 2.2), 0);
+
+  const movingNearEdge = new Box3(new Vector3(5.05, 0, 0.12), new Vector3(7.05, 1, 2.12));
+  const align = resolveHorizontalAlignment(movingNearEdge, [obstacle], 0.2, ['z']);
+  assert.ok(Math.abs(align.offset.z - (-0.12)) < 1e-6);
+  assert.equal(align.guides.length, 1);
+  assert.equal(align.guides[0].axis, 'z');
+  assert.equal(align.guides[0].coord, 0);
+
+  const blockedAlign = new Box3(new Vector3(3.9, 0, 0.1), new Vector3(5.9, 1, 2.1));
+  const noAlign = resolveHorizontalAlignment(blockedAlign, [obstacle], 0.2, ['x']);
+  assert.equal(noAlign.guides.length, 0);
+});
+
+test('persists explicit theme preference while keeping unthemed workspaces compatible', () => {
+  const values = new Map<string, string>();
+  const priorStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (k: string) => values.get(k), setItem: (k: string, v: string) => values.set(k, v) },
+  });
+  try {
+    const base = readWorkspace();
+    assert.equal(base.preferences.theme, undefined);
+
+    const darkWorkspace = { ...base, preferences: { ...base.preferences, theme: 'dark' as const } };
+    writeWorkspace(darkWorkspace);
+    assert.equal(readWorkspace().preferences.theme, 'dark');
+
+    const lightWorkspace = { ...base, preferences: { ...base.preferences, theme: 'light' as const } };
+    writeWorkspace(lightWorkspace);
+    assert.equal(readWorkspace().preferences.theme, 'light');
+
+    values.set('noruler-v3', JSON.stringify({
+      ...base,
+      preferences: { ...base.preferences, theme: 'invalid-value' },
+    }));
+    assert.equal(readWorkspace().preferences.theme, undefined);
+  } finally {
+    if (priorStorage) Object.defineProperty(globalThis, 'localStorage', priorStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
   }
 });

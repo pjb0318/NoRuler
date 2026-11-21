@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { WORLD_SCALE } from './domain.ts';
 import type { Dimensions } from './domain.ts';
+import { addEdgeLines, getModelAccent } from './modelPalette.ts';
+import type { ModelAccent } from './modelPalette.ts';
 
 export type DeskShape = { kind: 'desk-v1'; frontFlipped: boolean; clearanceRatio: number };
 export const deskPreviewDimensions: Dimensions = { width: 1200, depth: 600, height: 740 };
@@ -18,7 +20,7 @@ export function readDeskShape(value: unknown): DeskShape | undefined {
   return { kind: shape.kind, frontFlipped: shape.frontFlipped, clearanceRatio: shape.clearanceRatio };
 }
 
-export function createDeskModel(dimensions: Dimensions, shape: DeskShape) {
+export function createDeskModel(dimensions: Dimensions, shape: DeskShape, accent: ModelAccent = getModelAccent(0)) {
   const root = new THREE.Group();
   const desk = new THREE.Group();
   root.add(desk);
@@ -30,9 +32,9 @@ export function createDeskModel(dimensions: Dimensions, shape: DeskShape) {
   const leg = Math.min(.32, w * .12, d * .12, h * .1);
   const frameHeight = h - thickness - clearance;
   const legX = w / 2 - leg * .97, legZ = d / 2 - leg * .88;
-  const tabletop = new THREE.MeshStandardMaterial({ color: '#f6f6f2', roughness: .7 });
-  const frame = new THREE.MeshStandardMaterial({ color: '#e5e7e5', roughness: .52, metalness: .12 });
-  const brace = new THREE.MeshStandardMaterial({ color: '#b3b8b6', roughness: .55, metalness: .15 });
+  const tabletop = new THREE.MeshStandardMaterial({ color: accent.surface, roughness: .68, metalness: .04, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const frame = new THREE.MeshStandardMaterial({ color: accent.frame, roughness: .52, metalness: .16, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  const brace = new THREE.MeshStandardMaterial({ color: accent.brace, roughness: .5, metalness: .2, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
 
   function part(name: string, material: THREE.Material, width: number, height: number, depth: number,
     x: number, y: number, z: number, radius = 0) {
@@ -42,6 +44,7 @@ export function createDeskModel(dimensions: Dimensions, shape: DeskShape) {
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    addEdgeLines(mesh, accent.edge, name === 'tabletop' ? 0.68 : 0.52, 24);
     desk.add(mesh);
     return mesh;
   }

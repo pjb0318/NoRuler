@@ -1,5 +1,7 @@
 import { AXES } from './domain.ts';
 import type { Dimensions } from './domain.ts';
+import { readParametricShape } from './parametricModel.ts';
+import type { ParametricShape } from './parametricModel.ts';
 
 export type Axis = keyof Dimensions;
 export type Measurement = {
@@ -25,6 +27,7 @@ export type ShapeEvidence = {
   parts: ShapePart[];
   unseen: string;
   nextView: string;
+  parametric?: ParametricShape;
 };
 export type ImageSubject = { id: string; label: string; modelCode?: string; shapeEvidence: ShapeEvidence | null };
 export type SizeCandidate = {
@@ -46,6 +49,10 @@ export type ImageAnalysis = {
 export function supportsDesk(shape: ShapeEvidence | null | undefined) {
   return shape?.readiness === 'ready' && shape.kind === 'cross-braced-desk' &&
     deskParts.every(part => shape.parts.includes(part));
+}
+
+export function supportsParametric(shape: ShapeEvidence | null | undefined) {
+  return shape?.readiness === 'ready' && shape.kind !== 'cross-braced-desk' && !!shape.parametric;
 }
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -140,16 +147,21 @@ export function suggestedSpecRow(rows: SpecRow[], subject?: ImageSubject, option
 }
 
 function readShape(value: unknown): ShapeEvidence | null {
-  const { readiness, kind, region, view, parts, unseen, nextView } = record(value);
+  const { readiness, kind, region, view, parts, unseen, nextView, parametric: rawParametric } = record(value);
   if (readiness !== 'ready' && readiness !== 'needs_view') return null;
   const { left, top, right, bottom } = record(region);
   const bounds = typeof left === 'number' && typeof top === 'number' && typeof right === 'number' &&
     typeof bottom === 'number' && 0 <= left && left < right && right <= 1 &&
     0 <= top && top < bottom && bottom <= 1 ? { left, top, right, bottom } : null;
+  const normalizedKind = kind === 'cross-braced-desk' ? kind : 'other';
+  const parametric = readiness === 'ready' && normalizedKind !== 'cross-braced-desk'
+    ? readParametricShape(rawParametric)
+    : undefined;
   return {
-    readiness, kind: kind === 'cross-braced-desk' ? kind : 'other', region: bounds,
+    readiness, kind: normalizedKind, region: bounds,
     view: cleanText(view), parts: Array.isArray(parts) ? shapeParts.filter(part => parts.includes(part)) : [],
     unseen: cleanText(unseen), nextView: cleanText(nextView),
+    ...(parametric ? { parametric } : {}),
   };
 }
 

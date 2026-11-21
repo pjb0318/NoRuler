@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, FileText, Upload, ZoomIn } from 'lucide-react';
+import DraftStatusPanel from './DraftStatusPanel';
 import MeasurementReview from './MeasurementReview';
 import ProductRegion from './ProductRegion';
 import type { Region } from './ProductRegion';
@@ -11,13 +13,16 @@ export type ImageChoice = { id: string; candidate: SizeCandidate; subject?: Imag
 
 const analysisFailure = '이미지를 분석하지 못했어요. 다시 시도하거나 치수를 직접 입력해 주세요.';
 
-export default function ImageInput({ onRead, onMeasurements, review }: {
+export default function ImageInput({ onRead, onMeasurements, onBack, onSessionChange, review }: {
   onRead: (result: ImageChoice | null, reset?: boolean) => void;
   onMeasurements: (measurements: Measurement[]) => void;
+  onBack: () => void;
+  onSessionChange?: (state: { active: boolean; showForm: boolean }) => void;
   review: ReactNode;
 }) {
   const [file, setFile] = useState<File>();
   const [preview, setPreview] = useState('');
+  const [dragging, setDragging] = useState(false);
   const [specFile, setSpecFile] = useState<File>();
   const [specText, setSpecText] = useState('');
   const [specRows, setSpecRows] = useState<SpecRow[]>([]);
@@ -45,6 +50,8 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
   const [zoom, setZoom] = useState(1);
   const dialog = useRef<HTMLDialogElement>(null);
   const request = useRef<AbortController | null>(null);
+  const sessionCallback = useRef(onSessionChange);
+  sessionCallback.current = onSessionChange;
 
   useEffect(() => {
     if (!file) { setPreview(''); return; }
@@ -59,6 +66,12 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
     return () => URL.revokeObjectURL(url);
   }, [specFile]);
   useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => {
+    sessionCallback.current?.({
+      active: example || !!file || !!analysis,
+      showForm: example || !!analysis || !!error,
+    });
+  }, [example, file, analysis, error]);
 
   function changeSpec() {
     request.current?.abort();
@@ -84,12 +97,13 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
     dialog.current?.showModal();
   }
 
-  function chooseFile(next?: File) {
+  function clearLocalState() {
     dialog.current?.close();
     setZoom(1);
     request.current?.abort();
     setPending(false);
     setExample(false);
+    setDragging(false);
     setRegions({});
     setSpecFile(undefined);
     setSpecText('');
@@ -100,6 +114,10 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
     setAnalysis(null);
     setSubjectId(undefined);
     setSelectedCandidate(null);
+  }
+
+  function chooseFile(next?: File) {
+    clearLocalState();
     onRead(null, true);
     if (!next) return;
     if (!imageTypes.includes(next.type) || next.size === 0 || next.size > imageSizeLimit) {
@@ -107,6 +125,20 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
       return;
     }
     setFile(next);
+  }
+
+  function exitImageMode() {
+    clearLocalState();
+    onBack();
+  }
+
+  function startExample() {
+    clearLocalState();
+    setExample(true);
+    setAnalysis(exampleAnalysis);
+    const exampleSubject = exampleAnalysis.subjects[0];
+    setSubjectId(exampleSubject.id);
+    chooseOption(exampleAnalysis.candidates[0], 0, exampleSubject, true);
   }
 
   async function analyze(specOnly = false) {
@@ -180,107 +212,267 @@ export default function ImageInput({ onRead, onMeasurements, review }: {
   }
 
   const source = example ? import.meta.env.BASE_URL + 'measurement-example.png' : preview;
-  return <section className="image-input" aria-label="이미지에서 치수 가져오기" onPaste={event => {
-    const pasted = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/'));
-    if (pasted) {
-      event.preventDefault();
-      if (event.target instanceof HTMLElement && event.target.closest('.spec-input')) chooseSpec(pasted);
-      else chooseFile(pasted);
-    }
-  }}>
-    <label className="field-label" htmlFor="measurement-image">이미지에서 치수 가져오기</label>
-    <input id="measurement-image" type="file" accept={imageTypes.join(',')} onChange={event => {
-      chooseFile(event.target.files?.[0]);
-      event.target.value = '';
-    }} />
-    <div className="image-paste" tabIndex={0}>캡처를 붙여넣을 수 있어요</div>
-    {source && <>
-      <div className={review ? "image-shape-review" : undefined}>
-      <button className="image-preview-button" type="button" onClick={() => openOriginal(false)}>
-        <img src={source} alt="치수를 확인할 원본 도면" />
-        <span>원본 확대</span>
-      </button>
-      {review}
-      </div>
-      <dialog ref={dialog} className="image-review-dialog" aria-label="원본 도면 확대">
-        <div className="image-review-toolbar">
-          <button type="button" disabled={zoom <= 1} onClick={() => setZoom(value => value - .5)} aria-label="원본 축소">−</button>
-          <output>{zoom * 100}%</output>
-          <button type="button" disabled={zoom >= 3} onClick={() => setZoom(value => value + .5)} aria-label="원본 더 확대">+</button>
-          <button type="button" onClick={() => dialog.current?.close()}>닫기</button>
+  return (
+    <section
+      className="image-input"
+      aria-label="이미지에서 치수 가져오기"
+      onPaste={event => {
+        const pasted = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/'));
+        if (pasted) {
+          event.preventDefault();
+          if (event.target instanceof HTMLElement && event.target.closest('.spec-input')) chooseSpec(pasted);
+          else chooseFile(pasted);
+        }
+      }}
+    >
+      <input
+        id="measurement-image"
+        className="sr-only"
+        type="file"
+        accept={imageTypes.join(',')}
+        onChange={event => {
+          chooseFile(event.target.files?.[0]);
+          event.target.value = '';
+        }}
+      />
+
+      {!source ? (
+        <div className="upload-entry">
+          <label
+            htmlFor="measurement-image"
+            className={dragging ? 'upload-dropzone is-dragging' : 'upload-dropzone'}
+            onDragOver={event => { event.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={event => {
+              event.preventDefault();
+              setDragging(false);
+              const dropped = event.dataTransfer.files[0];
+              if (dropped) chooseFile(dropped);
+            }}
+          >
+            <span className="upload-dropzone-icon" aria-hidden="true"><Upload size={22} strokeWidth={1.7} /></span>
+            <strong>상품 사진 또는 치수 도면 올리기</strong>
+            <span>클릭해서 선택 · 끌어다 놓기 · 캡처 붙여넣기 (⌘V)</span>
+            <small>8 MB 이하 PNG · JPG · WebP</small>
+          </label>
+          <div className="entry-divider"><span>또는</span></div>
+          <div className="entry-example-bar">
+            <button type="button" className="secondary-action-button" onClick={startExample}>
+              <FileText size={15} />예시 도면 써보기
+            </button>
+            <span>API 키 없이 책상 예시 도면과 3D 초안 체험</span>
+          </div>
+          {error && <p className="input-error" role="alert">{error}</p>}
         </div>
-        <ProductRegion key={reviewSession} src={showSpecImage && specPreview ? specPreview : source} zoom={zoom}
-          region={showSpecImage || !subject ? null : regions[subject.id] ?? subject.shapeEvidence?.region}
-          onRegion={showSpecImage || !subject ? undefined : next => setRegions(current => ({ ...current, [subject.id]: next }))} />
-      </dialog>
-    </>}
-    {file && <details className="spec-input">
-      <summary>별도 치수 자료 추가</summary>
-      <label htmlFor="spec-image">사양표 캡처</label>
-      <input id="spec-image" type="file" accept={imageTypes.join(',')} onChange={event => {
-        if (event.target.files?.[0]) chooseSpec(event.target.files[0]);
-        event.target.value = '';
-      }} />
-      {specPreview && <button className="image-preview-button" type="button" onClick={() => openOriginal(true)}><img src={specPreview} alt="첨부한 사양표" /><span>사양표 확대</span></button>}
-      {specFile && <button type="button" onClick={() => chooseSpec()}>사양표 제거</button>}
-      <label htmlFor="spec-text">치수 또는 사양 텍스트</label>
-      <textarea id="spec-text" maxLength={specTextLimit} rows={3} value={specText} onChange={event => {
-        changeSpec();
-        setSpecText(event.target.value);
-      }} placeholder="모델명, 옵션, 치수 표기를 붙여넣으세요" />
-      {option && <button type="button" disabled={pending || (!specFile && !specText.trim())} onClick={() => analyze(true)}>추가 사양 분석</button>}
-    </details>}
-    <div className="image-input-actions">
-      {file && <button type="button" disabled={pending} onClick={() => analyze()}>{pending ? '분석 중…' : '이미지 분석'}</button>}
-      {pending && <button type="button" onClick={() => {
-        request.current?.abort();
-        setPending(false);
-      }}>분석 취소</button>}
-      <button type="button" onClick={() => {
-        chooseFile();
-        setExample(true);
-        setAnalysis(exampleAnalysis);
-        const exampleSubject = exampleAnalysis.subjects[0];
-        setSubjectId(exampleSubject.id);
-        chooseOption(exampleAnalysis.candidates[0], 0, exampleSubject, true);
-      }}>예시 도면 써보기</button>
-    </div>
-    {analysis && analysis.subjects.length > 1 && <fieldset className="size-candidates">
-      <legend>어떤 상품을 비교할까요?</legend>
-      {analysis.subjects.map(item => <label key={item.id}>
-        <input type="radio" name="image-subject" checked={subjectId === item.id} onChange={() => chooseSubject(analysis, item.id)} />
-        <span>{item.label}</span>
-      </label>)}
-    </fieldset>}
-    {subject && <p>선택한 상품 · <strong>{subject.label}</strong></p>}
-    {candidates.length > 1 && <fieldset className="size-candidates">
-      <legend>비교할 크기 한 개를 선택하세요</legend>
-      {candidates.map((candidate, index) => <label key={index}>
-        <input type="radio" name="size-candidate" checked={selectedCandidate === index} onChange={() => chooseOption(candidate, index, subject)} />
-        <span><strong>{candidate.label}</strong><small>
-          {(['width', 'depth', 'height'] as const).map((axis, i) =>
-            `${['가로', '깊이', '높이'][i]} ${candidate.dimensions[axis].mm ?? '미확인'}`
-          ).join(' · ')} mm
-        </small></span>
-      </label>)}
-    </fieldset>}
-    {option && specRows.length > 0 && <fieldset className="size-candidates">
-      <legend>{option.label}에 적용할 사양을 선택하세요</legend>
-      {specRows.map(row => <label key={row.id}>
-        <input type="radio" name="spec-row" checked={selectedSpecId === row.id} onChange={() => setSelectedSpecId(row.id)} />
-        <span><strong>{row.label}{row.id === suggestedSpecId ? ' · 연결 후보' : ''}</strong>
-          <small>{row.measurements.map(item => item.quote).join(' · ')}</small>
-        </span>
-      </label>)}
-    </fieldset>}
-    {option && mismatchedSpec && <p>모델 번호 또는 옵션이 달라 연결할 수 없어요.</p>}
-    {option && selectedSpec && !mismatchedSpec
-      ? <MeasurementReview key={`${option.id}-${selectedSpec.id}`} fromSpec
-          measurements={[...(option.measurements ?? []), ...selectedSpec.measurements]} onApply={onMeasurements} />
-      : option?.measurements && <MeasurementReview key={option.id} fromSpec={false}
-          measurements={option.measurements} onApply={onMeasurements} />}
-    {file && <p>분석할 때 선택한 자료를 Gemini로 보냅니다.</p>}
-    {example && <p>예시 책상 결과입니다. 크기 옵션과 3D 초안을 확인한 뒤 비교 공간에 추가해 보세요.</p>}
-    {error && <p className="input-error" role="alert">{error}</p>}
-  </section>;
+      ) : (
+        <div className="review-workspace">
+          <div className="review-topbar">
+            <div className="review-topbar-left">
+              <button type="button" className="image-back-button" onClick={exitImageMode}>
+                <ArrowLeft size={14} />뒤로가기
+              </button>
+              <span className="review-stage-label">{example ? '예시 도면 검토' : '사진 치수 검토'}</span>
+            </div>
+            {file && (
+              <div className="review-topbar-actions">
+                <label htmlFor="measurement-image" className="secondary-action-button">다른 사진 선택</label>
+                <button type="button" className="analyze-button" disabled={pending} onClick={() => analyze()}>
+                  {pending ? '분석 중…' : '이미지 분석'}
+                </button>
+                {pending && (
+                  <button
+                    type="button"
+                    className="secondary-action-button"
+                    onClick={() => {
+                      request.current?.abort();
+                      setPending(false);
+                    }}
+                  >
+                    분석 취소
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="review-stage-grid">
+            <div className="review-source-card">
+              <div className="review-card-header">
+                <strong>{example ? '원본 도면' : '업로드한 사진'}</strong>
+                <button className="image-preview-button" type="button" onClick={() => openOriginal(false)}>
+                  <ZoomIn size={14} />원본 확대
+                </button>
+              </div>
+              <button
+                type="button"
+                className="review-image-frame"
+                onClick={() => openOriginal(false)}
+                aria-label="원본 도면 크게 보기"
+              >
+                <img src={source} alt="치수를 확인할 원본 도면" />
+              </button>
+              {file && (
+                <details className="spec-input">
+                  <summary>별도 치수 자료 추가</summary>
+                  <div className="spec-input-controls">
+                    <label htmlFor="spec-image" className="secondary-action-button spec-file-trigger">
+                      사양표 이미지 선택
+                    </label>
+                    <input
+                      id="spec-image"
+                      className="sr-only"
+                      type="file"
+                      accept={imageTypes.join(',')}
+                      onChange={event => {
+                        if (event.target.files?.[0]) chooseSpec(event.target.files[0]);
+                        event.target.value = '';
+                      }}
+                    />
+                    {specFile && <button type="button" onClick={() => chooseSpec()}>사양표 제거</button>}
+                  </div>
+                  {specPreview && (
+                    <button className="image-preview-button" type="button" onClick={() => openOriginal(true)}>
+                      <img src={specPreview} alt="첨부한 사양표" />
+                      <span>사양표 확대</span>
+                    </button>
+                  )}
+                  <label htmlFor="spec-text">치수 또는 사양 텍스트</label>
+                  <textarea
+                    id="spec-text"
+                    maxLength={specTextLimit}
+                    rows={3}
+                    value={specText}
+                    onChange={event => {
+                      changeSpec();
+                      setSpecText(event.target.value);
+                    }}
+                    placeholder="모델명, 옵션, 치수 표기를 붙여넣으세요"
+                  />
+                  {option && (
+                    <button
+                      type="button"
+                      disabled={pending || (!specFile && !specText.trim())}
+                      onClick={() => analyze(true)}
+                    >
+                      추가 사양 분석
+                    </button>
+                  )}
+                </details>
+              )}
+            </div>
+
+            <div className="review-draft-card">
+              {review ?? (
+                <DraftStatusPanel
+                  pending={pending}
+                  error={error}
+                  hasAnalysis={!!analysis}
+                  hasCandidates={!!analysis?.candidates.length}
+                  hasChoice={!!option}
+                  evidence={subject?.shapeEvidence}
+                  onTryExample={startExample}
+                />
+              )}
+            </div>
+          </div>
+
+          <dialog ref={dialog} className="image-review-dialog" aria-label="원본 도면 확대">
+            <div className="image-review-toolbar">
+              <button type="button" disabled={zoom <= 1} onClick={() => setZoom(value => value - .5)} aria-label="원본 축소">−</button>
+              <output>{zoom * 100}%</output>
+              <button type="button" disabled={zoom >= 3} onClick={() => setZoom(value => value + .5)} aria-label="원본 더 확대">+</button>
+              <button type="button" onClick={() => dialog.current?.close()}>닫기</button>
+            </div>
+            <ProductRegion
+              key={reviewSession}
+              src={showSpecImage && specPreview ? specPreview : source}
+              zoom={zoom}
+              region={showSpecImage || !subject ? null : regions[subject.id] ?? subject.shapeEvidence?.region}
+              onRegion={showSpecImage || !subject ? undefined : next => setRegions(current => ({ ...current, [subject.id]: next }))}
+            />
+          </dialog>
+
+          {analysis && analysis.subjects.length > 1 && (
+            <fieldset className="size-candidates is-grid">
+              <legend>어떤 상품을 비교할까요?</legend>
+              {analysis.subjects.map(item => (
+                <label key={item.id}>
+                  <input
+                    type="radio"
+                    name="image-subject"
+                    checked={subjectId === item.id}
+                    onChange={() => chooseSubject(analysis, item.id)}
+                  />
+                  <span>{item.label}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+          {subject && <p className="selected-subject-note">선택한 상품 · <strong>{subject.label}</strong></p>}
+          {candidates.length > 1 && (
+            <fieldset className="size-candidates is-grid">
+              <legend>비교할 크기 한 개를 선택하세요</legend>
+              {candidates.map((candidate, index) => (
+                <label key={index}>
+                  <input
+                    type="radio"
+                    name="size-candidate"
+                    checked={selectedCandidate === index}
+                    onChange={() => chooseOption(candidate, index, subject)}
+                  />
+                  <span>
+                    <strong>{candidate.label}</strong>
+                    <small>
+                      {(['width', 'depth', 'height'] as const).map((axis, i) =>
+                        `${['가로', '깊이', '높이'][i]} ${candidate.dimensions[axis].mm ?? '미확인'}`
+                      ).join(' · ')} mm
+                    </small>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+          {option && specRows.length > 0 && (
+            <fieldset className="size-candidates">
+              <legend>{option.label}에 적용할 사양을 선택하세요</legend>
+              {specRows.map(row => (
+                <label key={row.id}>
+                  <input
+                    type="radio"
+                    name="spec-row"
+                    checked={selectedSpecId === row.id}
+                    onChange={() => setSelectedSpecId(row.id)}
+                  />
+                  <span>
+                    <strong>{row.label}{row.id === suggestedSpecId ? ' · 연결 후보' : ''}</strong>
+                    <small>{row.measurements.map(item => item.quote).join(' · ')}</small>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          )}
+          {option && mismatchedSpec && <p className="spec-mismatch-note">모델 번호 또는 옵션이 달라 연결할 수 없어요.</p>}
+          {option && selectedSpec && !mismatchedSpec ? (
+            <MeasurementReview
+              key={`${option.id}-${selectedSpec.id}`}
+              fromSpec
+              measurements={[...(option.measurements ?? []), ...selectedSpec.measurements]}
+              onApply={onMeasurements}
+            />
+          ) : option?.measurements && (
+            <MeasurementReview
+              key={option.id}
+              fromSpec={false}
+              measurements={option.measurements}
+              onApply={onMeasurements}
+            />
+          )}
+          {example && (
+            <p className="example-guide-note">예시 책상 결과입니다. 크기 옵션과 3D 초안을 확인한 뒤 비교 공간에 추가해 보세요.</p>
+          )}
+          {!!review && error && <p className="input-error" role="alert">{error}</p>}
+        </div>
+      )}
+    </section>
+  );
 }

@@ -1,8 +1,9 @@
 import type { DeskShape } from './deskModel.ts';
+import type { ParametricShape } from './parametricModel.ts';
 
 export type Unit = 'mm' | 'cm';
 export type Dimensions = { width: number; depth: number; height: number };
-export type Product = Dimensions & { name: string; deskShape?: DeskShape };
+export type Product = Dimensions & { name: string; deskShape?: DeskShape; parametricShape?: ParametricShape };
 export type PresetId = 'a4' | 'bottle' | 'phone' | 'laptop' | 'keyboard' | 'monitor' | `custom-${string}`;
 export type SavedModel = Product & { id: `custom-${string}`; history: boolean; preset: boolean };
 export type ActiveProduct = Product & { id?: SavedModel["id"] };

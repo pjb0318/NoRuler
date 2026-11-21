@@ -1,11 +1,13 @@
 import { PRESETS, isProduct, readSaved } from './domain.ts';
 import { readDeskShape } from './deskModel.ts';
+import { readParametricShape } from './parametricModel.ts';
 import type { Product, SavedModel, Unit } from './domain.ts';
 import { initialInstances } from './workspace.ts';
 import type { Position, SceneInstance } from './workspace.ts';
 
 export type CameraState = { positionMm: Position; targetMm: Position; zoom: number; halfHeight: number; aspect: number };
-export type Preferences = { names: boolean; dimensions: boolean; grid: boolean; snap: boolean };
+export type ThemeMode = 'light' | 'dark';
+export type Preferences = { names: boolean; dimensions: boolean; grid: boolean; snap: boolean; theme?: ThemeMode };
 export type Workspace = {
   schemaVersion: 3;
   instances: SceneInstance[];
@@ -28,10 +30,11 @@ function validateCamera(camera: CameraState | null | undefined): CameraState | n
     Number.isFinite(camera.aspect) && camera.aspect > 0 ? camera : null;
 }
 
-function restoreProduct<T extends Product>(value: T, hasDeskShapes: boolean): T {
-  const { deskShape, ...rest } = value;
-  const shape = hasDeskShapes ? readDeskShape(deskShape) : undefined;
-  return { ...rest, ...(shape ? { deskShape: shape } : {}) } as T;
+function restoreProduct<T extends Product>(value: T, hasCustomShapes: boolean): T {
+  const { deskShape, parametricShape, ...rest } = value;
+  const shape = hasCustomShapes ? readDeskShape(deskShape) : undefined;
+  const parametric = hasCustomShapes && !shape ? readParametricShape(parametricShape) : undefined;
+  return { ...rest, ...(shape ? { deskShape: shape } : {}), ...(parametric ? { parametricShape: parametric } : {}) } as T;
 }
 
 function readVersion(storageKey: string, version: 2 | 3): Workspace | null {
@@ -53,6 +56,8 @@ function readVersion(storageKey: string, version: 2 | 3): Workspace | null {
           shape: item.shape && isShape(item.shape) ? item.shape : undefined,
         }];
       });
+      const savedTheme = saved.preferences?.theme;
+      const theme = savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : undefined;
       return {
         schemaVersion: 3, instances, library, camera: validateCamera(saved.camera),
         preferences: {
@@ -60,6 +65,7 @@ function readVersion(storageKey: string, version: 2 | 3): Workspace | null {
           dimensions: saved.preferences?.dimensions !== false,
           grid: saved.preferences?.grid !== false,
           snap: saved.preferences?.snap !== false,
+          ...(theme ? { theme } : {}),
         },
         unit: saved.unit === 'mm' ? 'mm' : 'cm',
       };

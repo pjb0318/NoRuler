@@ -27,6 +27,24 @@ const measurementSchema = object({
   basis: { type: 'string', enum: ['dimension_line', 'label', 'unlabeled'] },
   scope: { type: 'string', enum: ['overall', 'clearance', 'package', 'part'] },
 });
+const ratioSchema = object(Object.fromEntries(AXES.map(axis => [axis, number])));
+const parametricPartSchema = object({
+  kind: { type: 'string', enum: ['box', 'cylinder'] },
+  x0: number, x1: number, y0: number, y1: number, z0: number, z1: number,
+  color: string, radius: number,
+});
+const parametricSchema = {
+  ...object({
+    builder: { type: 'string', enum: ['box-parts', 'lathe', 'extrude'] },
+    color: string,
+    ratio: ratioSchema,
+    parts: array(parametricPartSchema),
+    profile: array(object({ r: number, y: number })),
+    plane: { type: 'string', enum: ['front', 'side', 'top'] },
+    points: array(object({ u: number, v: number })),
+  }),
+  type: ['object', 'null'],
+};
 const analysisSchema = object({
   specRows: array(object({
     label: string, modelCode: string, optionCode: string, measurements: array(measurementSchema),
@@ -42,6 +60,7 @@ const analysisSchema = object({
       parts: array({ type: 'string', enum: [...deskParts, 'other'] }),
       unseen: string,
       nextView: string,
+      parametric: parametricSchema,
     }),
     options: array(object({
       label: string,
@@ -67,6 +86,8 @@ const analysisPrompt = [
   'Return the visible product region with normalized 0–1 image coordinates, origin top left, or null if unclear.',
   'Use cross-braced-desk only for a desk with a rounded rectangular tabletop, four square legs, two lower side stretchers, and a rear X brace.',
   'Only include parts supported by the image. Mark other structures as other.',
+  'Set parametric to null when kind is cross-braced-desk or readiness is needs_view. When readiness is ready and kind is other, fill parametric using the single best-fitting builder (box-parts, lathe, or extrude) if the visible form can be cleanly approximated, or null if too irregular or occluded.',
+  'For parametric, include visible relative aspect ratio in ratio (width, depth, height as positive preview ratios only, never copy them as measured dimensions). For box-parts, return 1 to 20 normalized 0–1 box or cylinder parts (x0<x1 left-to-right, y0<y1 bottom-to-top, z0<z1 back-to-front with z=1 front, #rrggbb color, corner radius 0–0.5) representing legs, open spaces, shelves, tops, or frames, with empty profile and points. For lathe, for rotationally symmetric items like bottles, cups, bowls, or pots, return 4 to 24 profile points sorted bottom y=0 to top y=1 with radius r in 0–0.5 and #rrggbb color, with empty parts and points. For extrude, for stepped stands, cradles, L-brackets, trays, or contoured silhouettes, choose plane (front, side, or top), #rrggbb color, and 3 to 24 non-self-intersecting closed polygon points (u, v in 0–1), with empty parts and profile.',
   'Extract explicit overall width, depth and height in mm for each option. Do not mix options, packaging, subparts, or different views.',
   'Leave missing or unsupported values null. Set needsReview for ambiguous measurements and give Korean evidence for each reading.',
   'Record explicit under-desk clearance separately. Use null if absent. Use Korean or original product and option labels.',

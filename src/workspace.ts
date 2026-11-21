@@ -1,4 +1,5 @@
 import { Box3, Vector3 } from 'three';
+import { cloneParametricShape } from './parametricModel.ts';
 import { resolvePlacement } from './placement.ts';
 import { PRESETS, WORLD_SCALE, sceneLayout } from './domain.ts';
 import type { ActiveProduct, Preset, Product } from './domain.ts';
@@ -14,8 +15,15 @@ export type SceneInstance = Pose & {
 
 export const restingPose = (x = 0): Pose => ({ positionMm: { x, y: 0, z: 0 }, yawDeg: 0 });
 
-function copyProduct({ name, width, depth, height, deskShape }: Product): Product {
-  return { name, width, depth, height, ...(deskShape ? { deskShape: { ...deskShape } } : {}) };
+function copyProduct({ name, width, depth, height, deskShape, parametricShape }: Product): Product {
+  return {
+    name,
+    width,
+    depth,
+    height,
+    ...(deskShape ? { deskShape: { ...deskShape } } : {}),
+    ...(parametricShape ? { parametricShape: cloneParametricShape(parametricShape) } : {}),
+  };
 }
 
 export function initialInstances(product: ActiveProduct | null, presets: Preset[]): SceneInstance[] {

@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { dimensionText } from './domain';
 import type { SavedModel, Unit } from './domain';
 
-export default function ModelLibrary({ models, unit, onOpen, onRename, onChange }: {
+export default function ModelLibrary({ models, unit, onOpen, onRename, onChange, onGoPrepare }: {
   models: SavedModel[];
   unit: Unit;
   onOpen: (model: SavedModel) => void;
   onRename: (id: SavedModel['id'], name: string) => void;
   onChange: (id: SavedModel['id'], field: 'history' | 'preset', enabled: boolean) => void;
+  onGoPrepare?: () => void;
 }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -17,7 +18,10 @@ export default function ModelLibrary({ models, unit, onOpen, onRename, onChange 
       const entries = models.filter(model => model[field]);
       return <section key={field}>
         <h2>{field === 'history' ? '모델 기록' : '내 프리셋'}</h2>
-        {!entries.length && <p>{field === 'history' ? '3D로 비교한 모델이 여기에 저장돼요.' : '모델 기록에서 프리셋을 등록할 수 있어요.'}</p>}
+        {!entries.length && <div className="library-empty">
+          <p>{field === 'history' ? '3D로 비교한 모델이 여기에 저장돼요.' : '모델 기록에서 프리셋을 등록할 수 있어요.'}</p>
+          {field === 'history' && onGoPrepare && <button type="button" className="secondary-action-button" onClick={onGoPrepare}>제품 준비하러 가기</button>}
+        </div>}
         {entries.map(model => <article key={model.id}>
           <strong>{model.name}</strong>
           <small>{dimensionText(model, unit)}</small>
