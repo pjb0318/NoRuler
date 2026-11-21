@@ -4,7 +4,6 @@ import type { RateLimitKV, RateLimiter } from '../../server/analyzeCore.ts';
 interface Env {
   GEMINI_API_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
-  ALLOW_WITHOUT_TURNSTILE?: string;
   ALLOWED_ORIGINS?: string;
   RATE_LIMIT_PER_MIN?: string;
   RATE_LIMIT_PER_DAY?: string;
@@ -53,7 +52,7 @@ export async function onRequest(context: PagesContext<Env>): Promise<Response> {
     clientIp: request.headers.get('CF-Connecting-IP') ?? '',
     allowedOrigins,
     turnstileSecretKey: env.TURNSTILE_SECRET_KEY,
-    requireTurnstile: env.ALLOW_WITHOUT_TURNSTILE !== 'true',
+    requireTurnstile: true,
     limiter: getLimiter(env),
     rateLimitKv: env.RATE_LIMIT_KV,
   });

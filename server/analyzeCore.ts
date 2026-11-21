@@ -106,15 +106,21 @@ export interface RateLimitConfig {
   perDay?: number;
   globalPerDay?: number;
   maxConcurrent?: number;
+  preFlightPerMinute?: number;
 }
 
 export type RateLimitRejectReason = 'concurrency' | 'per_minute' | 'per_day' | 'global_day';
+
+export type PreFlightLimitResult =
+  | { allowed: true }
+  | { allowed: false; retryAfterSec: number; reason: 'concurrency' | 'per_minute' };
 
 export type RateLimitAcquireResult =
   | { allowed: true; release: () => void }
   | { allowed: false; retryAfterSec: number; reason: RateLimitRejectReason };
 
 export interface RateLimiter {
+  checkPreFlight?(options: { clientIp: string; now: number }): PreFlightLimitResult;
   tryAcquire(options: { clientIp: string; kv?: RateLimitKV; now: number }): Promise<RateLimitAcquireResult>;
 }
 
@@ -125,6 +131,7 @@ export interface AnalyzeHandlerOptions {
   allowedOrigins?: string[];
   turnstileSecretKey?: string;
   requireTurnstile?: boolean;
+  expectedTurnstileAction?: string;
   limiter?: RateLimiter;
   rateLimitKv?: RateLimitKV;
   fetchImpl?: typeof fetch;
@@ -134,6 +141,7 @@ export interface AnalyzeHandlerOptions {
 
 const localAddresses = ['127.0.0.1', '::1', '::ffff:127.0.0.1'];
 const turnstileVerifyUrl = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+export const defaultTurnstileAction = 'image-dimensions';
 const geminiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent';
 const defaultTimeoutMs = 25_000;
 const turnstileTimeoutMs = 8_000;
@@ -144,6 +152,10 @@ function jsonReply(status: number, body: object, extraHeaders?: Record<string, s
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Robots-Tag': 'noindex, nofollow',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'same-origin',
       ...extraHeaders,
     },
   });
@@ -179,7 +191,7 @@ export function hasValidImageSignature(bytes: Uint8Array, mimeType: string): boo
 }
 
 type BodyReadResult =
-  | { ok: true; body: Uint8Array }
+  | { ok: true; body: Uint8Array<ArrayBuffer> }
   | { ok: false; status: 400 | 413; error: string };
 
 async function readBodyWithLimit(request: Request, limit: number): Promise<BodyReadResult> {
@@ -222,7 +234,7 @@ function normalizeMimeType(contentType: string): string {
   return contentType.split(';')[0].trim().toLowerCase();
 }
 
-export async function readSources(body: Uint8Array, contentType: string): Promise<Source[] | null> {
+export async function readSources(body: Uint8Array<ArrayBuffer>, contentType: string): Promise<Source[] | null> {
   const mediaType = normalizeMimeType(contentType);
   if (imageTypes.includes(mediaType)) {
     if (body.length === 0 || body.length > imageSizeLimit || !hasValidImageSignature(body, mediaType)) {
@@ -232,7 +244,7 @@ export async function readSources(body: Uint8Array, contentType: string): Promis
   }
   let form: FormData;
   try {
-    form = await new Response(new Uint8Array(body), { headers: { 'Content-Type': contentType } }).formData();
+    form = await new Response(body, { headers: { 'Content-Type': contentType } }).formData();
   } catch {
     return null;
   }
@@ -264,27 +276,39 @@ export function createRateLimiter(config: RateLimitConfig = {}): RateLimiter {
   const perDay = config.perDay ?? 20;
   const globalPerDay = config.globalPerDay ?? 150;
   const maxConcurrent = config.maxConcurrent ?? 3;
+  const preFlightPerMinute = config.preFlightPerMinute ?? Math.max(perMinute * 4, 15);
 
+  const preFlightWindows = new Map<string, number[]>();
   const minuteWindows = new Map<string, number[]>();
   const dailyCounts = new Map<string, number>();
   let currentDay = '';
   let inFlight = 0;
 
+  function pruneWindowMap(map: Map<string, number[]>, now: number) {
+    if (map.size <= 500) return;
+    for (const [key, list] of map) {
+      const latest = list[list.length - 1] ?? 0;
+      if (now - latest >= 60_000) map.delete(key);
+    }
+  }
+
   async function readDayCount(key: string, kv?: RateLimitKV): Promise<number> {
+    const local = dailyCounts.get(key) ?? 0;
     if (kv) {
       try {
         const raw = await kv.get(key);
         const parsed = Number.parseInt(raw ?? '0', 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+        const remote = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+        return Math.max(local, remote);
       } catch {
         // Fall back to in-memory counter if KV is temporarily unavailable.
       }
     }
-    return dailyCounts.get(key) ?? 0;
+    return local;
   }
 
   async function writeDayCount(key: string, nextValue: number, ttlSec: number, kv?: RateLimitKV): Promise<void> {
-    dailyCounts.set(key, nextValue);
+    dailyCounts.set(key, Math.max(dailyCounts.get(key) ?? 0, nextValue));
     if (kv) {
       try {
         await kv.put(key, String(nextValue), { expirationTtl: Math.max(60, ttlSec) });
@@ -295,6 +319,26 @@ export function createRateLimiter(config: RateLimitConfig = {}): RateLimiter {
   }
 
   return {
+    checkPreFlight({ clientIp, now }) {
+      if (inFlight >= maxConcurrent) {
+        return { allowed: false, retryAfterSec: 10, reason: 'concurrency' };
+      }
+      const ipKey = clientIp.trim() || 'unknown';
+      pruneWindowMap(preFlightWindows, now);
+      const recent = (preFlightWindows.get(ipKey) ?? []).filter(ts => now - ts < 60_000);
+      if (recent.length >= preFlightPerMinute) {
+        preFlightWindows.set(ipKey, recent);
+        const oldest = recent[0] ?? now;
+        return {
+          allowed: false,
+          retryAfterSec: Math.max(1, Math.ceil((oldest + 60_000 - now) / 1000)),
+          reason: 'per_minute',
+        };
+      }
+      recent.push(now);
+      preFlightWindows.set(ipKey, recent);
+      return { allowed: true };
+    },
     async tryAcquire({ clientIp, kv, now }) {
       if (inFlight >= maxConcurrent) {
         return { allowed: false, retryAfterSec: 10, reason: 'concurrency' };
@@ -311,17 +355,12 @@ export function createRateLimiter(config: RateLimitConfig = {}): RateLimiter {
         }
         currentDay = dayKey;
 
-        if (minuteWindows.size > 500) {
-          for (const [key, list] of minuteWindows) {
-            const latest = list[list.length - 1] ?? 0;
-            if (now - latest >= 60_000) minuteWindows.delete(key);
-          }
-        }
+        pruneWindowMap(minuteWindows, now);
 
-        const recent = (minuteWindows.get(ipKey) ?? []).filter(ts => now - ts < 60_000);
-        if (recent.length >= perMinute) {
-          minuteWindows.set(ipKey, recent);
-          const oldest = recent[0] ?? now;
+        const initialRecent = (minuteWindows.get(ipKey) ?? []).filter(ts => now - ts < 60_000);
+        if (initialRecent.length >= perMinute) {
+          minuteWindows.set(ipKey, initialRecent);
+          const oldest = initialRecent[0] ?? now;
           return {
             allowed: false,
             retryAfterSec: Math.max(1, Math.ceil((oldest + 60_000 - now) / 1000)),
@@ -338,21 +377,44 @@ export function createRateLimiter(config: RateLimitConfig = {}): RateLimiter {
 
         const globalKey = `rl:global:${dayKey}`;
         const ipDayKey = `rl:day:${dayKey}:${ipKey}`;
-        const globalCount = await readDayCount(globalKey, kv);
-        if (globalCount >= globalPerDay) {
+        const [globalCount, ipDayCount] = await Promise.all([
+          readDayCount(globalKey, kv),
+          readDayCount(ipDayKey, kv),
+        ]);
+
+        // Re-check per-minute and daily floors synchronously after awaiting KV to avoid concurrent races.
+        const recent = (minuteWindows.get(ipKey) ?? []).filter(ts => now - ts < 60_000);
+        if (recent.length >= perMinute) {
+          minuteWindows.set(ipKey, recent);
+          const oldest = recent[0] ?? now;
+          return {
+            allowed: false,
+            retryAfterSec: Math.max(1, Math.ceil((oldest + 60_000 - now) / 1000)),
+            reason: 'per_minute',
+          };
+        }
+
+        const effectiveGlobal = Math.max(globalCount, dailyCounts.get(globalKey) ?? 0);
+        if (effectiveGlobal >= globalPerDay) {
+          dailyCounts.set(globalKey, effectiveGlobal);
           return { allowed: false, retryAfterSec: secondsUntilMidnight, reason: 'global_day' };
         }
-        const ipDayCount = await readDayCount(ipDayKey, kv);
-        if (ipDayCount >= perDay) {
+        const effectiveIpDay = Math.max(ipDayCount, dailyCounts.get(ipDayKey) ?? 0);
+        if (effectiveIpDay >= perDay) {
+          dailyCounts.set(ipDayKey, effectiveIpDay);
           return { allowed: false, retryAfterSec: secondsUntilMidnight, reason: 'per_day' };
         }
 
+        const nextGlobal = effectiveGlobal + 1;
+        const nextIpDay = effectiveIpDay + 1;
         recent.push(now);
         minuteWindows.set(ipKey, recent);
+        dailyCounts.set(globalKey, nextGlobal);
+        dailyCounts.set(ipDayKey, nextIpDay);
         const ttl = secondsUntilMidnight + 3600;
         await Promise.all([
-          writeDayCount(globalKey, globalCount + 1, ttl, kv),
-          writeDayCount(ipDayKey, ipDayCount + 1, ttl, kv),
+          writeDayCount(globalKey, nextGlobal, ttl, kv),
+          writeDayCount(ipDayKey, nextIpDay, ttl, kv),
         ]);
 
         let released = false;
@@ -376,13 +438,6 @@ export function createRateLimiter(config: RateLimitConfig = {}): RateLimiter {
 
 function checkAccess(request: Request, options: AnalyzeHandlerOptions): Response | null {
   const secFetchSite = request.headers.get('sec-fetch-site');
-  if (options.mode === 'local') {
-    if (!localAddresses.includes(options.clientIp ?? '') || (secFetchSite && secFetchSite !== 'same-origin')) {
-      return jsonReply(403, { error: '이 데모는 로컬 브라우저에서 분석할 수 있어요.' });
-    }
-    return null;
-  }
-
   let requestOrigin = '';
   try {
     requestOrigin = new URL(request.url).origin;
@@ -390,11 +445,17 @@ function checkAccess(request: Request, options: AnalyzeHandlerOptions): Response
     return jsonReply(403, { error: '요청 주소를 확인할 수 없어요.' });
   }
   const origin = request.headers.get('origin');
-  const allowedOrigins = new Set([
-    requestOrigin,
-    ...(options.allowedOrigins ?? []).map(item => item.trim()).filter(Boolean),
-  ]);
-  if (!origin || !allowedOrigins.has(origin) || (secFetchSite && secFetchSite !== 'same-origin')) {
+
+  if (options.mode === 'local') {
+    if (!localAddresses.includes(options.clientIp ?? '') || (origin && origin !== requestOrigin) || (secFetchSite && secFetchSite !== 'same-origin')) {
+      return jsonReply(403, { error: '이 데모는 로컬 브라우저에서 분석할 수 있어요.' });
+    }
+    return null;
+  }
+
+  const configuredOrigins = (options.allowedOrigins ?? []).map(item => item.trim()).filter(Boolean);
+  const allowedOrigins = new Set(configuredOrigins.length > 0 ? configuredOrigins : [requestOrigin]);
+  if (!allowedOrigins.has(requestOrigin) || !origin || !allowedOrigins.has(origin) || (secFetchSite && secFetchSite !== 'same-origin')) {
     return jsonReply(403, { error: '허용된 웹 페이지에서만 이미지 분석을 요청할 수 있어요.' });
   }
   return null;
@@ -436,6 +497,7 @@ async function verifyTurnstile(
   secretKey: string,
   clientIp: string,
   fetchImpl: typeof fetch,
+  expectedAction: string,
 ): Promise<Response | null> {
   const token = request.headers.get('x-turnstile-token')?.trim() ?? '';
   if (!token || token.length > 2048) {
@@ -475,9 +537,9 @@ async function verifyTurnstile(
     return jsonReply(503, { error: '보안 확인 서비스가 응답하지 않았어요. 잠시 후 다시 시도하거나 직접 입력해 주세요.' });
   }
 
-  let verifyData: { success?: boolean; hostname?: string } | null = null;
+  let verifyData: { success?: boolean; hostname?: string; action?: string } | null = null;
   try {
-    verifyData = await outcome.response.json() as { success?: boolean; hostname?: string };
+    verifyData = await outcome.response.json() as { success?: boolean; hostname?: string; action?: string };
   } catch {
     return jsonReply(503, { error: '보안 확인 결과를 읽지 못했어요. 잠시 후 다시 시도해 주세요.' });
   }
@@ -490,6 +552,9 @@ async function verifyTurnstile(
   if (!isAlwaysPassTestKey &&
       (typeof verifyData.hostname !== 'string' || verifyData.hostname.toLowerCase() !== requestHostname.toLowerCase())) {
     return jsonReply(403, { error: '보안 확인 도메인이 일치하지 않아요. 페이지를 새로고침한 뒤 다시 시도해 주세요.' });
+  }
+  if (!isAlwaysPassTestKey && expectedAction && verifyData.action !== expectedAction) {
+    return jsonReply(403, { error: '보안 확인 요청 정보가 일치하지 않아요. 페이지를 새로고침한 뒤 다시 시도해 주세요.' });
   }
 
   return null;
@@ -505,7 +570,7 @@ const rateLimitMessages: Record<RateLimitRejectReason, string> = {
 /** Handles POST /api/image-dimensions across local Node middleware and Cloudflare Pages Functions. */
 export async function handleImageDimensionsRequest(request: Request, options: AnalyzeHandlerOptions): Promise<Response> {
   if (request.method !== 'POST') {
-    return jsonReply(405, { error: 'POST 요청만 지원해요.' });
+    return jsonReply(405, { error: 'POST 요청만 지원해요.' }, { Allow: 'POST' });
   }
 
   const accessError = checkAccess(request, options);
@@ -524,18 +589,6 @@ export async function handleImageDimensionsRequest(request: Request, options: An
     });
   }
 
-  const fetchImpl = options.fetchImpl ?? fetch;
-
-  if (options.turnstileSecretKey) {
-    const turnstileError = await verifyTurnstile(
-      request,
-      options.turnstileSecretKey,
-      options.clientIp ?? '',
-      fetchImpl,
-    );
-    if (turnstileError) return turnstileError;
-  }
-
   const contentType = request.headers.get('content-type') ?? '';
   const mediaType = normalizeMimeType(contentType);
   const multipart = mediaType === 'multipart/form-data';
@@ -547,6 +600,33 @@ export async function handleImageDimensionsRequest(request: Request, options: An
   const contentLength = Number(request.headers.get('content-length'));
   if (Number.isFinite(contentLength) && contentLength > sizeLimit) {
     return jsonReply(413, { error: '8 MB 이하의 이미지를 선택해 주세요.' });
+  }
+
+  if (options.limiter?.checkPreFlight) {
+    const preFlight = options.limiter.checkPreFlight({
+      clientIp: options.clientIp ?? '',
+      now: options.now ? options.now() : Date.now(),
+    });
+    if (!preFlight.allowed) {
+      return jsonReply(
+        429,
+        { error: rateLimitMessages[preFlight.reason] },
+        { 'Retry-After': String(preFlight.retryAfterSec) },
+      );
+    }
+  }
+
+  const fetchImpl = options.fetchImpl ?? fetch;
+
+  if (options.turnstileSecretKey) {
+    const turnstileError = await verifyTurnstile(
+      request,
+      options.turnstileSecretKey,
+      options.clientIp ?? '',
+      fetchImpl,
+      options.expectedTurnstileAction ?? defaultTurnstileAction,
+    );
+    if (turnstileError) return turnstileError;
   }
 
   const bodyOutcome = await readBodyWithLimit(request, sizeLimit);
@@ -580,7 +660,9 @@ export async function handleImageDimensionsRequest(request: Request, options: An
   try {
     const inputParts = sources.flatMap(source => [
       { text: `sourceId: ${source.id}` },
-      'text' in source ? { text: source.text } : { inlineData: { mimeType: source.mimeType, data: source.data } },
+      'text' in source
+        ? { text: `<spec_text>\n${source.text}\n</spec_text>` }
+        : { inlineData: { mimeType: source.mimeType, data: source.data } },
     ]);
 
     const outcome = await fetchWithLinkedTimeout(
@@ -590,10 +672,12 @@ export async function handleImageDimensionsRequest(request: Request, options: An
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': options.apiKey },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: analysisPrompt }, ...inputParts] }],
+          systemInstruction: { parts: [{ text: analysisPrompt }] },
+          contents: [{ parts: inputParts }],
           generationConfig: {
             responseMimeType: 'application/json',
             responseJsonSchema: analysisSchema,
+            maxOutputTokens: 8192,
           },
         }),
       },

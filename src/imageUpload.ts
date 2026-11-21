@@ -1,4 +1,4 @@
-import { imageTypes } from './imageDimensions.ts';
+import { imageSizeLimit, imageTypes } from './imageDimensions.ts';
 
 export const RESIZE_SKIP_BYTES = 600 * 1024;
 export const DEFAULT_MAX_DIM = 3200;
@@ -90,7 +90,8 @@ export async function prepareUploadImage(file: File): Promise<File> {
   try {
     const target = computeResizeDimensions(source.width, source.height);
     if (!target.width || !target.height) return file;
-    if (file.size <= RESIZE_SKIP_BYTES && !target.resized) {
+    const stripExif = file.type === 'image/jpeg';
+    if (file.size <= RESIZE_SKIP_BYTES && !target.resized && !stripExif) {
       return file;
     }
 
@@ -109,10 +110,10 @@ export async function prepareUploadImage(file: File): Promise<File> {
       encoded = await encodeCanvas(canvas, 'image/jpeg', 0.86);
     }
 
-    if (!encoded || encoded.size === 0 || !imageTypes.includes(encoded.type)) {
+    if (!encoded || encoded.size === 0 || encoded.size > imageSizeLimit || !imageTypes.includes(encoded.type)) {
       return file;
     }
-    if (!target.resized && encoded.size >= file.size) {
+    if (!target.resized && !stripExif && encoded.size >= file.size) {
       return file;
     }
 

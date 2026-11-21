@@ -54,9 +54,9 @@ Cloudflare Pages 프로젝트 → **Settings** → **Variables and Secrets**에�
 | `RATE_LIMIT_PER_DAY` | `20` | IP당 하루(UTC) 최대 분석 요청 수 |
 | `RATE_LIMIT_GLOBAL_PER_DAY` | `150` | 전체 공개 데모 하루(UTC) 최대 분석 요청 수 |
 | `MAX_CONCURRENT_REQUESTS` | `3` | 동시 Gemini 호출 상한 |
-| `ALLOWED_ORIGINS` | *(없음)* | 동일 출처 외 추가로 허용할 Origin (쉼표 구분) |
+| `ALLOWED_ORIGINS` | *(없음)* | 설정 시 허용할 Origin 고정 목록 (쉼표 구분, 프리뷰·해시 서브도메인 차단용) |
 
-> **중요:** `VITE_TURNSTILE_SITE_KEY`는 빌드 시점에 번들에 들어가는 변수이므로, 등록·수정한 뒤에는 반드시 **Retry deployment** 또는 새 커밋으로 **재배포**해야 반영됩니다. `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 절대 `VITE_` 접두사를 붙이지 마세요.
+> **중요:** `VITE_TURNSTILE_SITE_KEY`는 빌드 시점에 번들에 들어가는 변수이므로, 등록·수정한 뒤에는 반드시 **Retry deployment** 또는 새 커밋으로 **재배포**해야 반영됩니다. `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 절대 `VITE_` 접두사를 붙이지 마세요. 불필요한 노출을 막기 위해 Preview 배포는 끄거나(`None`) Preview 환경에 Secret과 KV 바인딩을 두지 않는 것을 권장합니다.
 
 ---
 
@@ -96,3 +96,4 @@ Cloudflare Pages 프로젝트 → **Settings** → **Variables and Secrets**에�
 
 1. **공개 데모 유지 + AI 분석만 중단**: Cloudflare Pages에서 `GEMINI_API_KEY` Secret을 삭제하거나 Google AI Studio에서 해당 키를 삭제합니다. 방문자는 계속 **예시 도면 써보기**와 **치수 직접 입력**을 체험할 수 있습니다.
 2. **배포 완전 종료**: Cloudflare Pages 프로젝트를 삭제하고, `README.md`의 체험 링크 안내를 갱신합니다.
+3. **제출용 소스코드 ZIP 생성**: `.env.local` 등 추적되지 않는 파일이 포함되지 않도록 `git archive -o NoRuler.zip HEAD`로 패키징하고 압축 목록을 확인합니다.

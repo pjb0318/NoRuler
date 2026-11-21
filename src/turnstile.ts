@@ -1,12 +1,14 @@
 /// <reference types="vite/client" />
 
 export const turnstileSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
+export const TURNSTILE_ACTION = 'image-dimensions';
 
 const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 const TOKEN_TIMEOUT_MS = 12_000;
 
 type TurnstileRenderOptions = {
   sitekey: string;
+  action?: string;
   theme?: 'light' | 'dark' | 'auto';
   appearance?: 'always' | 'execute' | 'interaction-only';
   execution?: 'render' | 'execute';
@@ -120,6 +122,7 @@ export function mountTurnstile(
         lastError = null;
         widgetId = api.render(container, {
           sitekey: siteKey,
+          action: TURNSTILE_ACTION,
           theme,
           appearance: 'interaction-only',
           execution: 'render',
