@@ -24,6 +24,9 @@ function toWebHeaders(rawHeaders: Record<string, string | string[] | undefined>)
 
 export function imageDimensionsMiddleware(apiKey: string | undefined): Connect.NextHandleFunction {
   return async (req, res, next) => {
+    if (req.url?.split('?')[0] === '/api/analysis-config' && req.method === 'GET') {
+      return replyJson(res, 200, { turnstileRequired: false, turnstileSiteKey: '' });
+    }
     if (req.url?.split('?')[0] !== '/api/image-dimensions') return next();
 
     const controller = new AbortController();

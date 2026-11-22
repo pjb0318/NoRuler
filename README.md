@@ -76,7 +76,7 @@ GEMINI_API_KEY=발급받은_키
 
 Cloudflare Pages에서 `npm run build`로 빌드한 `dist/`와 저장소의 `functions/`를 함께 배포합니다. 로컬 Vite 미들웨어와 Pages Function은 같은 분석 코어를 사용합니다.
 
-- `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 서버 Secret으로 등록하고, `VITE_TURNSTILE_SITE_KEY`는 빌드 변수로 설정합니다.
+- `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 서버 Secret으로 등록하고, `VITE_TURNSTILE_SITE_KEY`는 공개 Site Key로 설정합니다. 빌드 시 누락되어도 서버의 `TURNSTILE_SITE_KEY` 또는 `VITE_TURNSTILE_SITE_KEY`에서 읽습니다.
 - 공개 분석 API는 Origin과 Turnstile 토큰을 검증하고, IP별 분당·일일 요청 수, 전체 일일 요청 수와 동시 호출 수를 제한합니다. 한도는 환경 변수로 조정하며, 선택적으로 KV를 연결해 일일 사용량을 공유합니다.
 - 이미지 형식·용량 검사와 분석 타임아웃을 적용합니다. 로컬 실행에는 Turnstile 설정이 필요하지 않습니다.
 

@@ -25,6 +25,9 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
   theme?: 'light' | 'dark';
 }) {
   const [file, setFile] = useState<File>();
+  const [siteKey, setSiteKey] = useState(turnstileSiteKey);
+  const [securityLoading, setSecurityLoading] = useState(!turnstileSiteKey);
+  const [securityError, setSecurityError] = useState('');
   const [preview, setPreview] = useState('');
   const [dragging, setDragging] = useState(false);
   const [specFile, setSpecFile] = useState<File>();
@@ -60,18 +63,46 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
   sessionCallback.current = onSessionChange;
 
   useEffect(() => {
-    if (!turnstileSiteKey || !file || !turnstileContainer.current) {
+    if (turnstileSiteKey) return;
+    const controller = new AbortController();
+    let active = true;
+    const timer = window.setTimeout(() => controller.abort(), 10_000);
+    fetch('/api/analysis-config', { signal: controller.signal, cache: 'no-store' })
+      .then(async response => {
+        if (!response.ok) throw new Error('분석 보안 설정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.');
+        const config = await response.json();
+        if (!active) return;
+        if (config.turnstileRequired === false) return;
+        if (typeof config.turnstileSiteKey !== 'string' || !config.turnstileSiteKey.trim()) {
+          throw new Error('배포 서버의 보안 설정이 누락됐어요. 관리자에게 Turnstile Site Key 설정을 요청해 주세요.');
+        }
+        setSiteKey(config.turnstileSiteKey.trim());
+      })
+      .catch(error => {
+        if (active) setSecurityError(error instanceof Error && error.name !== 'AbortError'
+          ? error.message : '분석 보안 설정을 불러오지 못했어요. 페이지를 새로고침해 주세요.');
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+        if (active) setSecurityLoading(false);
+      });
+    return () => { active = false; window.clearTimeout(timer); controller.abort(); };
+  }, []);
+
+  useEffect(() => {
+    if (!siteKey || !file || !turnstileContainer.current) {
       turnstile.current?.destroy();
       turnstile.current = null;
       return;
     }
-    const controller = mountTurnstile(turnstileContainer.current, turnstileSiteKey, theme);
+    const controller = mountTurnstile(turnstileContainer.current, siteKey, theme);
     turnstile.current = controller;
     return () => {
       controller.destroy();
       if (turnstile.current === controller) turnstile.current = null;
     };
-  }, [file, theme]);
+    // The widget container is rendered only after the preview URL is ready.
+  }, [file, preview, theme, siteKey]);
 
   useEffect(() => {
     if (!file) { setPreview(''); return; }
@@ -163,6 +194,12 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
 
   async function analyze(specOnly = false) {
     const hasSpec = !!specFile || !!specText.trim();
+    if (securityLoading) return;
+    if (securityError) { setError(securityError); return; }
+    if (siteKey && !turnstile.current) {
+      setError('보안 확인을 준비 중이에요. 잠시 후 다시 시도해 주세요.');
+      return;
+    }
     if (pending || (specOnly ? !hasSpec || !option : !file)) return;
     const controller = new AbortController();
     request.current = controller;
@@ -178,7 +215,7 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
     let usedTurnstile = false;
     try {
       let turnstileToken = '';
-      if (turnstileSiteKey && turnstile.current) {
+      if (siteKey && turnstile.current) {
         try {
           turnstileToken = await turnstile.current.getToken(controller.signal);
         } catch (turnstileError) {
@@ -324,7 +361,7 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
             {file && (
               <div className="review-topbar-actions">
                 <label htmlFor="measurement-image" className="secondary-action-button">다른 사진 선택</label>
-                <button type="button" className="analyze-button" disabled={pending} onClick={() => analyze()}>
+                <button type="button" className="analyze-button" disabled={pending || securityLoading} onClick={() => analyze()}>
                   {pending ? '분석 중…' : '이미지 분석'}
                 </button>
                 {pending && (
@@ -343,7 +380,7 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
             )}
           </div>
 
-          {turnstileSiteKey && file && <div className="turnstile-slot" ref={turnstileContainer} />}
+          {siteKey && file && <div className="turnstile-slot" ref={turnstileContainer} />}
 
           <div className="review-stage-grid">
             <div className="review-source-card">
@@ -401,7 +438,7 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
                   {option && (
                     <button
                       type="button"
-                      disabled={pending || (!specFile && !specText.trim())}
+                      disabled={pending || securityLoading || (!specFile && !specText.trim())}
                       onClick={() => analyze(true)}
                     >
                       추가 사양 분석

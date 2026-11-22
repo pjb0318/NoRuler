@@ -42,7 +42,8 @@ Cloudflare Pages 프로젝트 → **Settings** → **Variables and Secrets**에�
 
 | 이름 | 종류 | 설명 |
 | --- | --- | --- |
-| `VITE_TURNSTILE_SITE_KEY` | Text (빌드 변수) | Turnstile **Site Key** (프론트엔드 빌드 시 포함됨) |
+| `VITE_TURNSTILE_SITE_KEY` | Text | Turnstile **Site Key** (빌드에 포함되며, 누락 시 서버 설정 API에서도 읽음) |
+| `TURNSTILE_SITE_KEY` | Text (선택) | 빌드 변수 대신 서버에서 제공할 공개 **Site Key** |
 | `TURNSTILE_SECRET_KEY` | **Secret** (암호화) | Turnstile **Secret Key** (`functions/` 서버 검증용) |
 | `GEMINI_API_KEY` | **Secret** (암호화) | Google AI Studio Gemini API 키 |
 
@@ -56,7 +57,7 @@ Cloudflare Pages 프로젝트 → **Settings** → **Variables and Secrets**에�
 | `MAX_CONCURRENT_REQUESTS` | `3` | 동시 Gemini 호출 상한 |
 | `ALLOWED_ORIGINS` | *(없음)* | 설정 시 허용할 Origin 고정 목록 (쉼표 구분, 프리뷰·해시 서브도메인 차단용) |
 
-> **중요:** `VITE_TURNSTILE_SITE_KEY`는 빌드 시점에 번들에 들어가는 변수이므로, 등록·수정한 뒤에는 반드시 **Retry deployment** 또는 새 커밋으로 **재배포**해야 반영됩니다. `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 절대 `VITE_` 접두사를 붙이지 마세요. 불필요한 노출을 막기 위해 Preview 배포는 끄거나(`None`) Preview 환경에 Secret과 KV 바인딩을 두지 않는 것을 권장합니다.
+> **중요:** 변수 등록·수정 후 **Retry deployment** 또는 새 커밋으로 **재배포**하세요. 빌드에 Site Key가 없으면 브라우저가 `/api/analysis-config`에서 `TURNSTILE_SITE_KEY` 또는 `VITE_TURNSTILE_SITE_KEY`를 읽습니다. 두 값 모두 없으면 관리자 설정 누락을 안내하고 분석 요청을 보내지 않습니다. Site Key는 공개 값이며 Secret Key에서 유도할 수 없으므로 별도로 등록해야 합니다. `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 절대 `VITE_` 접두사를 붙이지 마세요. 불필요한 노출을 막기 위해 Preview 배포는 끄거나(`None`) Preview 환경에 Secret과 KV 바인딩을 두지 않는 것을 권장합니다.
 
 ---
 
