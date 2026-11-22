@@ -145,6 +145,8 @@ async function takeScreenshots(browser: Browser, url: string) {
 
   const mobile = await openApp(browser, url, true);
   await expect(button(mobile, '제품 추가')).toBeVisible();
+  await button(mobile, '제품 추가').click();
+  await expect(mobile.getByRole('complementary', { name: '도구 패널' })).toBeVisible();
   const mobileImage = await capture(mobile);
   await mobile.close();
 

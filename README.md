@@ -4,6 +4,10 @@
 
 상품 사진·도면·사양표에서 치수와 형태를 확인하고, 익숙한 물건과 같은 축척의 3D 공간에서 크기를 비교합니다. 사진에서 만든 3D 초안과 직접 입력한 크기 상자를 함께 놓고 옮기거나 돌려 볼 수 있습니다.
 
+[**브라우저에서 바로 체험하기**](https://noruler-aaf.pages.dev) · [사용 방법](#빠른-시작) · [배포 가이드](docs/DEPLOY_CLOUDFLARE.md)
+
+공개 데모에서는 설치나 API 키 입력 없이 내장 예시·직접 입력·실제 이미지 분석을 사용할 수 있습니다. 이미지 분석에는 보안 확인과 요청 횟수 제한이 적용되며, 한도에 도달해도 예시와 직접 입력은 계속 사용할 수 있습니다.
+
 ![예시 책상 도면과 3D 초안을 검토하면서 물병·스마트폰과 크기를 비교하는 현재 작업 화면](docs/images/hero.png)
 
 **MIT · Node.js ≥ 22.18 · React + TypeScript + Three.js**
@@ -21,14 +25,18 @@
 
 ## 빠른 시작
 
-**준비물:** Node.js 22.18 이상, WebGL 2 지원 브라우저. 실제 상품 이미지 분석에는 Gemini API 키가 필요합니다.
+설치 없이 사용하려면 [공개 데모](https://noruler-aaf.pages.dev)를 엽니다. 아래 명령은 소스코드를 내려받아 로컬에서 실행할 때 사용합니다.
+
+**준비물:** Node.js 22.18 이상, WebGL 2 지원 브라우저. 로컬에서 실제 상품 이미지를 분석하려면 Gemini API 키가 필요합니다.
+
+Windows에서는 PowerShell 또는 명령 프롬프트, macOS·Linux에서는 터미널을 열고 프로젝트 폴더로 이동합니다.
 
 ```sh
 npm install
 npm run dev
 ```
 
-프로젝트 폴더에서 실행한 뒤 터미널에 표시된 `Local` 주소(기본값 `http://localhost:5173`)를 엽니다. API 키 없이도 내장 예시 도면과 직접 입력 기능을 사용할 수 있습니다.
+프로젝트 폴더에서 실행한 뒤 터미널에 표시된 `Local` 주소(기본값 `http://127.0.0.1:5173`)를 엽니다. API 키 없이도 내장 예시 도면과 직접 입력 기능을 사용할 수 있습니다. 서버는 실행한 컴퓨터에서만 접속하도록 설정되어 있습니다.
 
 ### 예시 책상 도면으로 체험
 
@@ -43,9 +51,9 @@ npm run dev
 
 **제품 추가 → 치수 직접 입력**에서 제품명과 가로·깊이·높이를 입력하고 **3D로 크기 비교하기**를 누릅니다. 입력한 외곽 크기의 3D 상자가 추가됩니다. 단위는 `mm`와 `cm`를 지원하며, 전환해도 실제 크기는 유지됩니다.
 
-### 실제 상품 이미지 분석
+### 실제 상품 이미지 분석 (로컬 설정)
 
-프로젝트 루트에 `.env.local`을 만들고 API 키를 넣습니다.
+공개 데모는 서버에 설정된 키로 분석합니다. 로컬에서 분석하려면 프로젝트 루트에 `.env.local`을 만들고 API 키를 넣습니다. 필요한 변수는 [.env.example](.env.example)에서도 확인할 수 있습니다.
 
 ```dotenv
 GEMINI_API_KEY=발급받은_키
@@ -58,9 +66,21 @@ GEMINI_API_KEY=발급받은_키
 3. **이미지 분석**을 누르고, 상품이나 크기 옵션이 여러 개라면 비교할 대상을 선택합니다.
 4. 원본과 치수 출처를 대조하고, 누락된 치수는 직접 입력합니다. 충돌한 값이나 확인이 필요한 축을 검토한 뒤 비교 공간에 추가합니다.
 
-분석 요청에 포함된 이미지와 텍스트는 Google Gemini로 전송됩니다. 현재 서버 코드의 분석 모델은 `gemini-3.5-flash-lite`입니다. API 키는 Vite 미들웨어에서 사용하므로 브라우저용 환경 변수로 넣지 않습니다.
+큰 이미지는 브라우저에서 비율을 유지하며 축소·재인코딩한 뒤 전송합니다. 업로드 후 작은 글자와 치수의 가독성을 확인하세요.
 
-`/api/image-dimensions`는 `npm run dev`와 빌드 후 `npm run preview`에서 동작합니다. `dist/`만 정적으로 배포하면 분석 API는 제공되지 않으며, 내장 예시 도면과 직접 입력을 사용할 수 있습니다.
+분석 요청에 포함된 이미지와 텍스트는 분석 서버를 거쳐 Google Gemini로 전송됩니다. 현재 서버 코드의 분석 모델은 `gemini-3.5-flash-lite`입니다. API 키는 서버에서만 사용하며 `VITE_` 접두사가 붙은 환경 변수에 넣으면 안 됩니다.
+
+`/api/image-dimensions`는 로컬의 `npm run dev`와 빌드 후 `npm run preview`, 공개 배포의 Cloudflare Pages Functions에서 동작합니다. `dist/`만 정적으로 배포하면 분석 API는 제공되지 않으며, 내장 예시 도면과 직접 입력을 사용할 수 있습니다.
+
+### 공개 배포
+
+Cloudflare Pages에서 `npm run build`로 빌드한 `dist/`와 저장소의 `functions/`를 함께 배포합니다. 로컬 Vite 미들웨어와 Pages Function은 같은 분석 코어를 사용합니다.
+
+- `GEMINI_API_KEY`와 `TURNSTILE_SECRET_KEY`는 서버 Secret으로 등록하고, `VITE_TURNSTILE_SITE_KEY`는 빌드 변수로 설정합니다.
+- 공개 분석 API는 Origin과 Turnstile 토큰을 검증하고, IP별 분당·일일 요청 수, 전체 일일 요청 수와 동시 호출 수를 제한합니다. 한도는 환경 변수로 조정하며, 선택적으로 KV를 연결해 일일 사용량을 공유합니다.
+- 이미지 형식·용량 검사와 분석 타임아웃을 적용합니다. 로컬 실행에는 Turnstile 설정이 필요하지 않습니다.
+
+환경 변수, KV 바인딩과 배포 확인 절차는 [Cloudflare 배포 가이드](docs/DEPLOY_CLOUDFLARE.md)를 참고하세요.
 
 ## 작업 화면
 
@@ -128,9 +148,15 @@ Catppuccin Latte 라이트 테마와 Mocha 다크 테마를 지원합니다. 처
 
 <img src="docs/images/library.png" alt="책상 모델을 기록과 내 프리셋에서 다시 꺼낼 수 있는 패널" width="440" />
 
-모바일에서는 3D 공간, 탭, 도구 패널을 위에서 아래로 배치합니다. 물건을 탭해 선택하고 핀치로 확대하거나 두 손가락으로 시점을 이동할 수 있습니다.
+모바일에서는 3D 공간 위로 하단 도구 패널이 올라오는 바텀 시트 방식을 사용합니다. 하단 탭으로 도구를 선택하고, 패널 손잡이·제목 영역을 위아래로 드래그하거나 **패널 크게 보기 / 패널 기본 크기로** 버튼을 눌러 크기를 바꿀 수 있습니다. **패널 닫기**로 공간을 넓게 보고, 탭을 눌러 다시 엽니다. 물건을 탭해 선택하고 핀치로 확대하거나 두 손가락으로 시점을 이동할 수 있습니다.
 
-<img src="docs/images/mobile.png" alt="390 × 844 크기의 모바일 첫 화면: 3D 공간 아래에 작업 탭과 제품 추가 패널이 배치됨" width="390" />
+<img src="docs/images/mobile.png" alt="390 × 844 크기의 모바일 화면: 3D 공간과 하단 탭, 크기를 조절할 수 있는 도구 패널" width="390" />
+
+상단의 **정보** 버튼에서 프로젝트 소개, 데이터 이용 안내, GitHub 저장소·문제 제보·MIT 라이선스 링크를 확인할 수 있습니다. 하단과 정보 창에 앱 버전 번호를 표시합니다.
+
+### 데이터 이용 안내
+
+배치·모델·설정은 사용하는 브라우저에 저장되며, 계정이나 기기 사이에 동기화되지 않습니다. 이미지 분석을 요청할 때는 선택한 이미지와 입력한 사양이 서버와 Google Gemini로 전송됩니다. 공개 데모의 보안 확인과 요청 제한에는 Cloudflare와 IP 주소가 사용됩니다. 개인정보가 담긴 이미지나 텍스트는 입력하지 마세요.
 
 ## 구현 구조
 
@@ -138,7 +164,9 @@ Catppuccin Latte 라이트 테마와 Mocha 다크 테마를 지원합니다. 처
 | --- | --- |
 | 사용자 인터페이스 | React 19, TypeScript, Lucide 아이콘 |
 | 3D 렌더링·조작 | Three.js, OrbitControls, TransformControls |
-| 이미지·텍스트 분석 | Google Gemini API, Vite 미들웨어 |
+| 이미지·텍스트 분석 | Google Gemini API, 공통 분석 코어 |
+| 분석 API·공개 배포 | 로컬 Vite 미들웨어, Cloudflare Pages + Functions |
+| 공개 API 보호 | Cloudflare Turnstile, 요청·동시성 제한, 선택적 KV |
 | 개발 서버·빌드 | Vite |
 | 브라우저 저장 | localStorage |
 | 검증 | Node.js 테스트 러너, Playwright |
@@ -183,7 +211,10 @@ Gemini는 치수·출처·형태 후보를 제안하고, NoRuler는 범위·구�
 | 역할 | 파일 |
 | --- | --- |
 | 작업 패널·입력·테마 연결 | [src/App.tsx](src/App.tsx), [src/styles.css](src/styles.css) |
-| Gemini 프롬프트·응답 스키마·분석 API | [server/imageDimensions.ts](server/imageDimensions.ts) |
+| Gemini 프롬프트·응답 스키마·요청 검증·분석 코어 | [server/analyzeCore.ts](server/analyzeCore.ts) |
+| 로컬 분석 API·Cloudflare Pages Function | [server/imageDimensions.ts](server/imageDimensions.ts), [functions/api/image-dimensions.ts](functions/api/image-dimensions.ts) |
+| 이미지 전송 최적화·Turnstile 연동 | [src/imageUpload.ts](src/imageUpload.ts), [src/turnstile.ts](src/turnstile.ts) |
+| PC 패널 크기 조절 | [src/ResizeHandle.tsx](src/ResizeHandle.tsx) |
 | 치수 후보 정규화·출처 대조 | [src/imageDimensions.ts](src/imageDimensions.ts) |
 | 이미지 입력·영역 지정·사양 검토·상태 안내 | [src/ImageInput.tsx](src/ImageInput.tsx), [src/ProductRegion.tsx](src/ProductRegion.tsx), [src/MeasurementReview.tsx](src/MeasurementReview.tsx), [src/DraftStatusPanel.tsx](src/DraftStatusPanel.tsx) |
 | 3D 초안 미리보기·책상·범용 모델 생성 | [src/DeskPreview.tsx](src/DeskPreview.tsx), [src/deskModel.ts](src/deskModel.ts), [src/parametricModel.ts](src/parametricModel.ts) |
@@ -201,8 +232,8 @@ npm run test:e2e
 ```
 
 - `npm run build`: TypeScript 타입 검사와 Vite 프로덕션 빌드를 실행합니다. `npm run preview`로 빌드 결과를 확인할 수 있습니다.
-- `npm test`: 단위 변환, 입력 검증, 기본·책상·범용 3D 모델의 외곽 치수, 형상 검증, 색상·외곽선, 배치·스냅, 저장·복원을 확인합니다 ([단위 테스트](src/domain.test.ts)).
-- `npm run test:e2e`: 이미지·치수 검토, 초안 생성·복제·수정·복원, 직접 드래그, 바닥 배치, 테마 전환·사이드바, 모바일 터치 취소를 검증합니다 ([브라우저 테스트](tests/comparison.spec.ts)). 테스트에서는 고정된 이미지 분석 응답을 사용하므로 실제 Gemini API의 품질이나 연결을 검증하지는 않습니다.
+- `npm test`: 단위 변환, 입력 검증, 기본·책상·범용 3D 모델의 외곽 치수, 형상 검증, 색상·외곽선, 배치·스냅, 저장·복원과 이미지 리사이징을 확인합니다 ([클라이언트 테스트](src/domain.test.ts)). [분석 API 테스트](server/analyzeCore.test.ts)는 Origin·Turnstile 검증, 요청 제한, 이미지 검증, 타임아웃·취소를 확인합니다.
+- `npm run test:e2e`: 이미지·치수 검토, 초안 생성·복제·수정·복원, 직접 드래그, 바닥 배치, 테마 전환·사이드바, 모바일 바텀 시트·터치 취소와 프로젝트 정보 창을 검증합니다 ([브라우저 테스트](tests/comparison.spec.ts)). 테스트에서는 고정된 이미지 분석 응답을 사용하므로 실제 Gemini API의 품질이나 연결을 검증하지는 않습니다.
 
 README 이미지는 현재 UI를 실행해 다시 생성합니다. 개발 서버를 별도로 켤 필요가 없으며, 내장 도면·자체 제작 이미지·고정된 분석 응답을 사용하므로 API 키도 필요 없습니다.
 
@@ -222,7 +253,7 @@ PLAYWRIGHT_CHANNEL=chrome node --experimental-strip-types scripts/screenshots.ts
 
 - 치수 출처 검토와 세 가지 범용 생성 방식까지 지원하지만, 복잡하거나 가려진 제품의 정밀 형태를 보장하지는 않습니다. 초안의 사진 유사도와 지원 범위를 더 검증할 필요가 있습니다.
 - 외곽 상자 단위 충돌 판정을 부품 단위로 세분화하면 책상 아래·선반 사이 공간까지 배치에 활용할 수 있습니다.
-- 정적 배포 환경에서 실제 이미지 분석을 제공하려면 별도 분석 백엔드가 필요합니다.
+- 공개 데모는 Cloudflare Pages Functions로 이미지 분석을 제공합니다. 다양한 실제 상품의 분석 품질과 Windows Chrome·Edge, 실제 모바일 기기에서의 조작은 추가 확인이 필요합니다.
 
 ## 출처와 크레딧
 
@@ -235,6 +266,7 @@ PLAYWRIGHT_CHANNEL=chrome node --experimental-strip-types scripts/screenshots.ts
 | `lucide-react` | ISC (Feather에서 이어받은 부분은 MIT) | [Lucide](https://github.com/lucide-icons/lucide) |
 | `@playwright/test` | Apache-2.0 | [Playwright](https://github.com/microsoft/playwright) |
 | `@types/node`, `@types/react`, `@types/react-dom`, `@types/three` | MIT | [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped) |
+| Cloudflare Pages·Functions·Turnstile·KV | 외부 서비스 이용약관 적용 | [Cloudflare](https://www.cloudflare.com/) |
 | Google Gemini API | 외부 서비스 이용약관 적용 | [Gemini API 이용약관](https://ai.google.dev/gemini-api/terms) |
 | IBM Plex Sans KR, IBM Plex Mono | SIL Open Font License 1.1 | [IBM Plex](https://github.com/IBM/plex) |
 | Catppuccin Latte·Mocha 색상 팔레트 | MIT | [Catppuccin](https://github.com/catppuccin/catppuccin) |
