@@ -686,6 +686,56 @@ test('drops a floating object straight to the floor with 바닥에 놓기', asyn
   await expect(ground).toBeDisabled();
 });
 
+test('wraps mobile placement guidance and grounds the object by tapping the guidance', async ({ browser }) => {
+  for (const viewport of [{ width: 360, height: 740 }, { width: 390, height: 844 }]) {
+    const context = await browser.newContext({ viewport, hasTouch: true });
+    try {
+      const page = await context.newPage();
+      await page.goto('/');
+      const button = (name: string) => page.getByRole('button', { name, exact: true });
+      await button('놓인 물건').tap();
+      await button('내가 궁금한 상자 선택').tap();
+      await button('패널 닫기').tap();
+      const height = page.getByLabel('높이 (mm)');
+      await height.fill('169.1');
+      await button('적용').tap();
+
+      const status = page.locator('.object-move-bar [role="status"]');
+      const action = status.getByRole('button');
+      await expect(action).toContainText('169 mm 떠 있음');
+      const metrics = await action.evaluate(el => ({
+        width: el.clientWidth, scrollWidth: el.scrollWidth,
+        height: el.clientHeight, scrollHeight: el.scrollHeight,
+        lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+      }));
+      expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.width);
+      expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.height);
+      expect(metrics.height).toBeGreaterThan(metrics.lineHeight * 2);
+      const statusBox = (await status.boundingBox())!;
+      const resetBox = (await page.getByLabel('물건 위치 초기화', { exact: true }).boundingBox())!;
+      expect(resetBox.x >= statusBox.x + statusBox.width
+        || resetBox.y >= statusBox.y + statusBox.height).toBe(true);
+      const viewerBox = (await page.locator('.viewer').boundingBox())!;
+      expect(resetBox.y + resetBox.height).toBeLessThanOrEqual(viewerBox.y + viewerBox.height);
+
+      await action.tap();
+      await expect(height).toHaveValue('0');
+      await expect(status.getByRole('button')).toHaveCount(0);
+      await expect(button('바닥에 놓기')).toBeDisabled();
+
+      // The guidance uses the same undoable command as the existing control.
+      await button('놓인 물건').tap();
+      await button('실행 취소').tap();
+      await button('패널 닫기').tap();
+      await expect(height).toHaveValue('169.1');
+      await button('바닥에 놓기').tap();
+      await expect(height).toHaveValue('0');
+    } finally {
+      await context.close();
+    }
+  }
+});
+
 test('switches between Catppuccin Latte and Mocha themes with persistence and icon-only collapsed rail', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/');

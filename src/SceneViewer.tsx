@@ -21,7 +21,7 @@ function moveStatusText(moveState: MoveState, mode: TransformMode) {
   if (!moveState.selected) return '물건을 선택해 드래그로 옮기세요';
   if (mode === 'rotate') return '물건이나 초록 고리를 드래그해 회전하세요';
   const heightMm = moveState.heightMm ?? 0;
-  if (heightMm >= 0.5) return `바닥에서 ${Math.round(heightMm)} mm 떠 있음 · '바닥에 놓기'로 바로 내릴 수 있어요`;
+  if (heightMm >= 0.5) return `바닥에서 ${Math.round(heightMm)} mm 떠 있음 · '바닥에 놓기' 버튼이나 이 안내를 눌러 내려놓으세요`;
   return '물건을 드래그해 바닥에서 이동 · 초록 화살표로 높이 조절';
 }
 
@@ -89,6 +89,9 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
   useEffect(() => { engine.current?.setTransformMode(mode); }, [mode, retry]);
   useEffect(() => { engine.current?.setTheme(theme); }, [theme, retry]);
   const isFloating = (moveState.heightMm ?? 0) >= 0.05;
+  const canGroundFromStatus = !moveState.dragging && !moveState.placementMessage
+    && !!moveState.selected && mode === 'translate' && (moveState.heightMm ?? 0) >= 0.5;
+  const groundSelected = () => engine.current?.groundSelected();
   const viewerClass = [
     'viewer',
     moveState.dragging ? 'is-moving-product' : '',
@@ -110,7 +113,11 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
       </button>)}
     </div>
     {instances.length > 0 && <div className="object-move-bar">
-      <span role="status">{moveStatusText(moveState, mode)}</span>
+      <span role="status" className={canGroundFromStatus ? 'is-actionable' : undefined}>
+        {canGroundFromStatus
+          ? <button type="button" className="move-status-action" onClick={groundSelected}>{moveStatusText(moveState, mode)}</button>
+          : moveStatusText(moveState, mode)}
+      </span>
       <button aria-label="물건 위치 초기화" title="물건의 위치와 회전 초기화" disabled={!moveState.moved} onClick={onReset}><RotateCcw size={12} />위치 초기화</button>
     </div>}
     <div className="viewer-tools">
@@ -154,7 +161,7 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
         </form>
         <div className="pose-actions">
           {[-90, 90].map(angle => <button key={angle} type="button" onClick={() => engine.current?.setSelectedPose(moveState.heightMm ?? 0, (moveState.yawDeg ?? 0) + angle)}>{angle > 0 ? '+' : '−'}90°</button>)}
-          <button type="button" className={isFloating ? 'ground-button is-floating-action' : 'ground-button'} disabled={!isFloating} onClick={() => engine.current?.groundSelected()}><ArrowDownToLine size={13} />바닥에 놓기</button>
+          <button type="button" className={isFloating ? 'ground-button is-floating-action' : 'ground-button'} disabled={!isFloating} onClick={groundSelected}><ArrowDownToLine size={13} />바닥에 놓기</button>
           <button type="button" onClick={() => engine.current?.fitSelected()}>선택 맞춤</button>
           <button type="button" onClick={() => setResetError(!!moveState.id && !onResetOne(moveState.id))}>선택 위치 초기화</button>
         </div>
