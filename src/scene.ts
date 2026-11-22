@@ -11,6 +11,7 @@ import type { CameraState, ThemeMode } from './storage.ts';
 import type { Pose, SceneInstance } from './workspace.ts';
 import {
   findSupportTopY,
+  overlaps,
   isRestingOnSupport,
   resolveFloorSnap,
   resolveHorizontalAlignment,
@@ -35,6 +36,7 @@ export type MoveState = {
   selected: string | null;
   id?: string;
   heightMm?: number;
+  restingOnObject?: boolean;
   yawDeg?: number;
   placementMessage?: string;
   snapStatus?: string;
@@ -177,6 +179,11 @@ export class ComparisonScene {
   private view: View | null = 'perspective';
   private onContextLost: (event: Event) => void;
   private models = new Map<string, THREE.Group>();
+  private groupIds: string[] = [];
+  private groupMode = false;
+  private onGroupChange: (ids: string[]) => void = () => {};
+  private groupStart: Map<string, { position: THREE.Vector3; yaw: number }> | null = null;
+  private onPosesCommit: (poses: { id: string; pose: Pose }[]) => void;
   private selectedId: string | null = null;
   private selectedName: string | null = null;
   private snapEnabled = true;
@@ -217,8 +224,9 @@ export class ComparisonScene {
   }
 
   private host: HTMLDivElement;
-  constructor(host: HTMLDivElement, onError: () => void, onMoveStateChange: (state: MoveState) => void, onViewChange: (view: View | null) => void, onPoseCommit: (id: string, pose: Pose) => void, onCamera: (camera: CameraState) => void) {
+  constructor(host: HTMLDivElement, onError: () => void, onMoveStateChange: (state: MoveState) => void, onViewChange: (view: View | null) => void, onPoseCommit: (id: string, pose: Pose) => void, onCamera: (camera: CameraState) => void, onPosesCommit: (poses: { id: string; pose: Pose }[]) => void) {
     this.host = host;
+    this.onPosesCommit = onPosesCommit;
     this.onPoseCommit = onPoseCommit;
     this.onCamera = onCamera;
     this.onMoveStateChange = onMoveStateChange;
@@ -377,6 +385,13 @@ export class ComparisonScene {
     return null;
   }
   private updateSelectionGuides(bounds: THREE.Box3 | null, tone: 'idle' | 'moving' | 'snapped' | 'blocked' = 'idle') {
+    if (bounds && this.groupMode && this.groupIds.length > 1 && this.groupIds.includes(this.selectedId ?? '')) {
+      bounds = bounds.clone();
+      for (const id of this.groupIds) {
+        const model = this.models.get(id);
+        if (model) bounds.union(this.meshBounds(model));
+      }
+    }
     if (!bounds || bounds.isEmpty()) {
       this.outline.visible = false;
       this.groundGuide.visible = false;
@@ -466,6 +481,62 @@ export class ComparisonScene {
     this.alignmentLines.geometry.setDrawRange(0, 0);
     this.alignmentLines.visible = false;
   }
+  setGroupSelection(ids: string[], onChange: (ids: string[]) => void, enabled: boolean) {
+    this.groupMode = enabled;
+    this.groupIds = ids.filter(id => this.models.has(id));
+    this.onGroupChange = onChange;
+    if (this.groupIds.length && !this.groupIds.includes(this.selectedId ?? '')) this.selectObject(this.groupIds.at(-1)!);
+    else this.selectObject(this.selectedId);
+  }
+  private chooseObject(id: string | null) {
+    if (!this.groupMode) { this.selectObject(id); return; }
+    this.groupIds = id ? (this.groupIds.includes(id) ? this.groupIds.filter(other => other !== id) : [...this.groupIds, id]) : [];
+    this.onGroupChange([...this.groupIds]);
+    this.selectObject(this.groupIds.at(-1) ?? null);
+  }
+  private captureGroup() {
+    return new Map(this.groupIds.filter(id => this.models.has(id)).map(id => {
+      const model = this.models.get(id)!;
+      return [id, { position: model.position.clone(), yaw: model.rotation.y }];
+    }));
+  }
+  private restoreGroup(start: Map<string, { position: THREE.Vector3; yaw: number }>) {
+    for (const [id, pose] of start) {
+      const model = this.models.get(id);
+      if (model) { model.position.copy(pose.position); model.rotation.y = pose.yaw; }
+    }
+  }
+  private groupIsValid() {
+    const external = [...this.models].filter(([id]) => !this.groupIds.includes(id)).map(([, model]) => this.meshBounds(model));
+    return this.groupIds.every(id => {
+      const model = this.models.get(id);
+      if (!model) return false;
+      const bounds = this.meshBounds(model);
+      return bounds.min.y >= -1e-7 && !external.some(target => overlaps(bounds, target));
+    });
+  }
+  private commitGroup(start: Map<string, { position: THREE.Vector3; yaw: number }>) {
+    const poses = [...start].flatMap(([id, previous]) => {
+      const model = this.models.get(id)!;
+      if (model.position.distanceToSquared(previous.position) < 1e-12 && Math.abs(model.rotation.y - previous.yaw) < 1e-6) return [];
+      return [{ id, pose: { positionMm: { x: model.position.x / s, y: model.position.y / s, z: model.position.z / s }, yawDeg: THREE.MathUtils.radToDeg(model.rotation.y) } }];
+    });
+    if (poses.length) this.onPosesCommit(poses);
+  }
+  private moveGroup(start: Map<string, { position: THREE.Vector3; yaw: number }>, position: THREE.Vector3, yaw: number) {
+    const anchor = start.get(this.selectedId!)!;
+    const angle = yaw - anchor.yaw;
+    for (const [id, pose] of start) {
+      const model = this.models.get(id)!;
+      model.position.copy(pose.position).sub(anchor.position).applyAxisAngle(new THREE.Vector3(0, 1, 0), angle).add(position);
+      model.rotation.y = pose.yaw + angle;
+    }
+    this.lastDragBlocked = !this.groupIsValid();
+    this.snapStatus = this.lastDragBlocked ? '그룹이 다른 물건과 겹쳐요' : '그룹 이동';
+    this.snapTone = this.lastDragBlocked ? 'blocked' : 'neutral';
+    this.updateSelectionGuides(this.meshBounds(this.models.get(this.selectedId!)!), this.lastDragBlocked ? 'blocked' : 'moving');
+    this.reportMoveState(true);
+  }
   selectObject(id: string | null) {
     if (id !== this.selectedId) this.placementMessage = '';
     this.selectedId = id;
@@ -501,6 +572,7 @@ export class ComparisonScene {
       selected: this.selectedName,
       id: this.selectedId ?? undefined,
       heightMm,
+      restingOnObject: !!model && isRestingOnSupport(this.meshBounds(model), this.otherTargetBounds(this.selectedId!), 0.01 * s),
       placementMessage: this.placementMessage,
       yawDeg,
       snapStatus: dragging ? this.snapStatus : '',
@@ -522,6 +594,7 @@ export class ComparisonScene {
     this.snapTone = 'neutral';
     this.lastDragBlocked = false;
     this.lastReportedKey = '';
+    this.groupStart = this.groupMode && this.groupIds.length > 1 && this.groupIds.includes(this.selectedId ?? '') ? this.captureGroup() : null;
     this.dragStart = { position: model.position.clone(), yaw: model.rotation.y, clientX: event.clientX, clientY: event.clientY };
     this.dragStartedOnSupport = this.selectedId
       ? isRestingOnSupport(this.meshBounds(model), this.otherTargetBounds(this.selectedId), 2 * s)
@@ -579,7 +652,8 @@ export class ComparisonScene {
       }
     }
     const hit = this.hitObject(event.pointerType === 'touch');
-    if (hit && hit.id === this.selectedId) {
+    if (hit && (hit.id === this.selectedId || this.groupMode && this.groupIds.includes(hit.id))) {
+      if (hit.id !== this.selectedId) this.selectObject(hit.id);
       const model = this.models.get(hit.id);
       if (model) {
         if (this.transform.mode === 'translate') {
@@ -698,7 +772,7 @@ export class ComparisonScene {
     if (start?.id !== event.pointerId) return;
     this.pointerStart = null;
     if (event.type === 'pointerup' && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 8) {
-      this.selectObject(start.target);
+      this.chooseObject(start.target);
     }
   };
   private onPointerLeave = () => {
@@ -767,11 +841,27 @@ export class ComparisonScene {
 
     const id = this.pendingSnapId;
     const model = id ? this.models.get(id) : undefined;
+    if (this.groupStart && id && model) {
+      const groupStart = this.groupStart;
+      this.groupStart = null;
+      if (!commit || !wasActivated || wasBlocked || !this.groupIsValid()) {
+        this.restoreGroup(groupStart);
+        if (commit && wasActivated) this.placementMessage = '그룹을 놓을 공간이 없어 이전 배치로 돌아갔어요.';
+      } else this.commitGroup(groupStart);
+      this.pendingSnapId = null;
+      this.dragStart = null;
+      if (commit && !wasActivated) this.chooseObject(id);
+      else this.selectObject(id);
+      this.measureBounds();
+      this.rebuildGrid();
+      return;
+    }
     if (id && model && ((!commit || (!wasActivated && wasKind !== 'gizmo')) && start)) {
       model.position.copy(start.position);
       model.rotation.y = start.yaw;
       this.pendingSnapId = null;
-      this.selectObject(id);
+      if (this.groupMode && commit && !wasActivated) this.chooseObject(id);
+      else this.selectObject(id);
     } else if (id && model && commit) {
       if (this.transform.mode === 'rotate' && !this.snapEnabled) {
         const quarterTurn = Math.PI / 2;
@@ -807,6 +897,16 @@ export class ComparisonScene {
     const id = this.selectedId;
     const model = id ? this.models.get(id) : undefined;
     if (!id || !model || !Number.isFinite(heightMm) || heightMm < 0 || heightMm > 10000 || !Number.isFinite(yawDeg)) return;
+    this.placementMessage = '';
+    if (this.groupMode && this.groupIds.length > 1 && this.groupIds.includes(this.selectedId ?? '')) {
+      const start = this.captureGroup();
+      this.moveGroup(start, new THREE.Vector3(model.position.x, heightMm * s, model.position.z), THREE.MathUtils.degToRad(yawDeg));
+      if (this.groupIsValid()) this.commitGroup(start);
+      else { this.restoreGroup(start); this.placementMessage = '그룹을 놓을 공간이 없어요.'; }
+      this.selectObject(id);
+      this.measureBounds(); this.rebuildGrid();
+      return;
+    }
     const previous = { position: model.position.clone(), yaw: model.rotation.y };
     this.placementMessage = '';
     model.position.y = heightMm * s;
@@ -827,8 +927,23 @@ export class ComparisonScene {
     if (!id || !model) return;
     const previous = { position: model.position.clone(), yaw: model.rotation.y };
     this.placementMessage = '';
-    model.position.y = 0;
-    if (this.applyPlacement(id, model)) {
+    if (this.groupMode && this.groupIds.length > 1 && this.groupIds.includes(this.selectedId ?? '')) {
+      const start = this.captureGroup();
+      const targets = [...this.models].filter(([other]) => !this.groupIds.includes(other)).map(([, other]) => this.meshBounds(other));
+      let delta = -Infinity;
+      for (const memberId of this.groupIds) {
+        const bounds = this.meshBounds(this.models.get(memberId)!);
+        delta = Math.max(delta, findSupportTopY(bounds, targets, bounds.min.y) - bounds.min.y);
+      }
+      for (const memberId of this.groupIds) this.models.get(memberId)!.position.y += delta;
+      if (this.groupIsValid()) this.commitGroup(start);
+      else { this.restoreGroup(start); this.placementMessage = '그룹을 내려놓을 공간이 없어요.'; }
+      this.selectObject(id); this.measureBounds(); this.rebuildGrid();
+      return;
+    }
+    const bounds = this.meshBounds(model);
+    model.position.y += findSupportTopY(bounds, this.otherTargetBounds(id), bounds.min.y) - bounds.min.y;
+    if (!this.otherTargetBounds(id).some(target => overlaps(this.meshBounds(model), target))) {
       if (model.position.distanceToSquared(previous.position) > 1e-12) {
         this.commitPose(id, model);
       }
@@ -909,6 +1024,7 @@ export class ComparisonScene {
     dragAxis: 'horizontal' | 'vertical',
     allowedAlignAxes: readonly ('x' | 'z')[],
   ) {
+    if (this.groupStart) { this.moveGroup(this.groupStart, rawPosition, rawYaw); return; }
     model.position.copy(rawPosition);
     model.rotation.y = rawYaw;
     const targets = this.otherTargetBounds(id);
@@ -987,6 +1103,7 @@ export class ComparisonScene {
     const yaw = this.snapEnabled
       ? THREE.MathUtils.degToRad(Math.round(THREE.MathUtils.radToDeg(rawYaw) / 15) * 15)
       : rawYaw;
+    if (this.groupStart) { this.moveGroup(this.groupStart, this.groupStart.get(id)!.position, yaw); return; }
     if (this.dragStart) model.position.copy(this.dragStart.position);
     model.rotation.y = yaw;
     const targets = this.otherTargetBounds(id);
@@ -1027,7 +1144,7 @@ export class ComparisonScene {
     if (result.kind === 'contact') model.position.add(result.offset);
     return true;
   }
-  clearSelection() { this.finishDrag(); this.selectObject(null); }
+  clearSelection() { this.finishDrag(); this.chooseObject(null); }
   update(instances: SceneInstance[], unit: Unit, showDimensions: boolean, showGrid: boolean, colorIndices?: ReadonlyMap<string, number>) {
     this.finishDrag();
     this.dimensionGroup.removeFromParent();

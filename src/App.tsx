@@ -28,6 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import SceneViewer from './SceneViewer';
+import ResizeHandle from './ResizeHandle';
 import ModelLibrary from './ModelLibrary';
 import ImageInput from './ImageInput';
 import type { ImageChoice } from './ImageInput';
@@ -154,6 +155,9 @@ export default function App() {
   function setInstances(change: (items: SceneInstance[]) => SceneInstance[]) {
     setHistory(current => changeScene(current, change));
   }
+  const [sidebarWidth, setSidebarWidth] = useState(432);
+  const [groupMode, setGroupMode] = useState(false);
+  const [groupIds, setGroupIds] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = instances.find(item => item.id === editingId);
@@ -546,6 +550,7 @@ export default function App() {
   }
 
   function editInstance(item: SceneInstance) {
+    if (groupMode) setGroupIds([item.id]);
     resetInput();
     setSelectedId(item.id);
     setEditingId(item.id);
@@ -554,6 +559,13 @@ export default function App() {
     setActivePanel('add');
     setDrawerOpen(true);
     setSheetExpanded(false);
+  }
+
+  function commitPoses(poses: { id: string; pose: Pose }[]) {
+    setInstances(current => current.map(item => {
+      const update = poses.find(entry => entry.id === item.id);
+      return update ? { ...item, ...update.pose } : item;
+    }));
   }
 
   function commitPose(id: string, pose: Pose) {
@@ -587,6 +599,7 @@ export default function App() {
     colorSlots.current.clear();
     setResetKey(value => value + 1);
     setSelectedId(null);
+    setGroupIds([]);
     setInstances(() => initialInstances(DEFAULT_PRODUCT, PRESETS.filter(item => item.id === 'bottle' || item.id === 'phone')));
     setName(DEFAULT_PRODUCT.name);
     setUnit('cm');
@@ -698,7 +711,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className={drawerOpen ? 'studio-shell' : 'studio-shell is-collapsed'}>
+      <main className={drawerOpen ? 'studio-shell' : 'studio-shell is-collapsed'} style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
         <nav className="studio-rail" aria-label="작업 패널">
           <button
             type="button"
@@ -1049,8 +1062,14 @@ export default function App() {
                               className={item.shape ? 'object-icon' : 'object-icon is-product'}
                               style={accentStyle}
                               aria-label={`${item.snapshot.name} 선택`}
-                              aria-pressed={selectedId === item.id}
-                              onClick={() => setSelectedId(item.id)}
+                              aria-pressed={groupMode ? groupIds.includes(item.id) : selectedId === item.id}
+                              onClick={() => {
+                                if (groupMode) {
+                                  const next = groupIds.includes(item.id) ? groupIds.filter(id => id !== item.id) : [...groupIds, item.id];
+                                  setGroupIds(next);
+                                  setSelectedId(next.at(-1) ?? null);
+                                } else setSelectedId(item.id);
+                              }}
                             >
                               <PresetIcon id={item.shape ?? 'custom-box'} size={19} />
                             </button>
@@ -1112,6 +1131,7 @@ export default function App() {
               </div>
             )}
           </div>
+          <ResizeHandle label="사이드바 너비 조절" axis="x" value={sidebarWidth} min={300} max={600} onChange={setSidebarWidth} />
         </aside>
 
         <section className="studio-stage">
@@ -1122,6 +1142,14 @@ export default function App() {
             selectedId={selectedId}
             onSelect={setSelectedId}
             onPoseCommit={commitPose}
+            onPosesCommit={commitPoses}
+            groupMode={groupMode}
+            groupIds={groupIds.filter(id => instances.some(item => item.id === id))}
+            onGroupIdsChange={setGroupIds}
+            onGroupModeChange={() => {
+              setGroupMode(value => !value);
+              setGroupIds(!groupMode && selectedId ? [selectedId] : []);
+            }}
             onResetOne={resetOne}
             initialCamera={initial.camera}
             onCamera={recordCamera}

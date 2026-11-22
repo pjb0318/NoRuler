@@ -5,6 +5,8 @@ import type { MoveState, TransformMode, View } from './scene';
 import type { Unit } from './domain';
 import type { CameraState, Preferences, ThemeMode } from './storage';
 import type { Pose, SceneInstance } from './workspace';
+import ResizeHandle from './ResizeHandle';
+import type { CSSProperties } from 'react';
 
 function moveStatusText(moveState: MoveState, mode: TransformMode) {
   if (moveState.dragging) {
@@ -19,6 +21,7 @@ function moveStatusText(moveState: MoveState, mode: TransformMode) {
   }
   if (moveState.placementMessage) return moveState.placementMessage;
   if (!moveState.selected) return '물건을 선택해 드래그로 옮기세요';
+  if (moveState.restingOnObject) return '물건 위에 놓여 있어요 · 드래그해 옮길 수 있어요';
   if (mode === 'rotate') return '물건이나 초록 고리를 드래그해 회전하세요';
   const heightMm = moveState.heightMm ?? 0;
   if (heightMm >= 0.5) return `바닥에서 ${Math.round(heightMm)} mm 떠 있음 · '바닥에 놓기' 버튼이나 이 안내를 눌러 내려놓으세요`;
@@ -34,13 +37,18 @@ const views: { id: View; label: string }[] = [
   { id: 'top', label: '위에서' },
 ];
 
-export default function SceneViewer({ instances, unit, resetKey, selectedId, onSelect, onPoseCommit, onReset, onResetOne, initialCamera, onCamera, preferences, onPreferences, colorIndices, theme }: {
+export default function SceneViewer({ instances, unit, resetKey, selectedId, onSelect, onPoseCommit, onPosesCommit, groupMode, groupIds, onGroupIdsChange, onGroupModeChange, onReset, onResetOne, initialCamera, onCamera, preferences, onPreferences, colorIndices, theme }: {
   instances: SceneInstance[];
   unit: Unit;
   resetKey: number;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onPoseCommit: (id: string, pose: Pose) => void;
+  onPosesCommit: (poses: { id: string; pose: Pose }[]) => void;
+  groupMode: boolean;
+  groupIds: string[];
+  onGroupIdsChange: (ids: string[]) => void;
+  onGroupModeChange: () => void;
   onReset: () => void;
   onResetOne: (id: string) => boolean;
   initialCamera: CameraState | null;
@@ -50,6 +58,7 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
   colorIndices: ReadonlyMap<string, number>;
   theme: ThemeMode;
 }) {
+  const [controlsHeight, setControlsHeight] = useState(160);
   const host = useRef<HTMLDivElement>(null);
   const engine = useRef<ComparisonScene | null>(null);
   const [resetError, setResetError] = useState(false);
@@ -61,8 +70,8 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
   const firstUpdate = useRef(true);
   const restoreCamera = useRef(initialCamera);
   const [moveState, setMoveState] = useState<MoveState>({ moved: false, dragging: false, selected: null });
-  const callbacks = useRef({ onSelect, onPoseCommit, onCamera });
-  useEffect(() => { callbacks.current = { onSelect, onPoseCommit, onCamera }; }, [onSelect, onPoseCommit, onCamera]);
+  const callbacks = useRef({ onSelect, onPoseCommit, onPosesCommit, onCamera, onGroupIdsChange });
+  useEffect(() => { callbacks.current = { onSelect, onPoseCommit, onPosesCommit, onCamera, onGroupIdsChange }; }, [onSelect, onPoseCommit, onPosesCommit, onCamera, onGroupIdsChange]);
   useEffect(() => {
     firstUpdate.current = true;
     try { engine.current = new ComparisonScene(host.current!, () => setError(true), state => {
@@ -71,7 +80,7 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
     }, setView, (id, pose) => callbacks.current.onPoseCommit(id, pose), camera => {
       restoreCamera.current = camera;
       callbacks.current.onCamera(camera);
-    }); }
+    }, poses => callbacks.current.onPosesCommit(poses)); }
     catch { setError(true); }
     return () => { engine.current?.destroy(); engine.current = null; };
   }, [retry]);
@@ -88,9 +97,11 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
   useEffect(() => { engine.current?.setSnapEnabled(snap); }, [snap, retry]);
   useEffect(() => { engine.current?.setTransformMode(mode); }, [mode, retry]);
   useEffect(() => { engine.current?.setTheme(theme); }, [theme, retry]);
-  const isFloating = (moveState.heightMm ?? 0) >= 0.05;
+  const groupKey = groupIds.join('|');
+  useEffect(() => { engine.current?.setGroupSelection(groupMode ? groupIds : [], ids => callbacks.current.onGroupIdsChange(ids), groupMode); }, [groupMode, groupKey, retry]);
+  const isFloating = !moveState.restingOnObject && (moveState.heightMm ?? 0) >= 0.05;
   const canGroundFromStatus = !moveState.dragging && !moveState.placementMessage
-    && !!moveState.selected && mode === 'translate' && (moveState.heightMm ?? 0) >= 0.5;
+    && !!moveState.selected && !moveState.restingOnObject && mode === 'translate' && (moveState.heightMm ?? 0) >= 0.5;
   const groundSelected = () => engine.current?.groundSelected();
   const viewerClass = [
     'viewer',
@@ -99,7 +110,14 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
     moveState.dragging && moveState.snapTone === 'blocked' ? 'is-snap-blocked' : '',
     names ? '' : 'hide-object-names',
   ].filter(Boolean).join(' ');
-  return <div className="viewer-shell"><section className={viewerClass} aria-label="3D 비교 공간">
+  return <div className="viewer-shell">
+    <div className="group-selection-toolbar">
+      <button type="button" className="group-toggle" aria-pressed={groupMode} onClick={onGroupModeChange}>
+        그룹 묶기{groupMode ? ` · ${groupIds.length}개 선택 · 켜짐` : ''}
+      </button>
+      {groupMode && <span>물건을 눌러 그룹에 추가·제외하세요</span>}
+    </div>
+    <section className={viewerClass} aria-label="3D 비교 공간">
     <div className="viewer-top-right">
       <span className="scale-badge">1:1 실제 축척</span>
       <div className="view-indicator" aria-label="현재 시점">{views.find(option => option.id === view)?.label ?? '자유 시점'}</div>
@@ -136,7 +154,9 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
     </div>
     <div className="grid-caption">격자 한 칸 = 10 cm</div>
   </section>
-    {moveState.selected && <div className="move-controls" role="group" aria-label={`${moveState.selected} 조작`}>
+    {moveState.selected && <div className="move-controls" style={{ '--controls-height': `${controlsHeight}px` } as CSSProperties} role="group" aria-label={`${moveState.selected} 조작`}>
+      <ResizeHandle label="하단 조작 영역 높이 조절" axis="y" value={controlsHeight} min={110} max={320} onChange={setControlsHeight} />
+      {groupMode && <p className="group-selection-help">{groupIds.length}개 선택 · 공간이나 놓인 물건 목록에서 선택하세요. 함께 이동·회전하며 실행 취소도 한 번에 적용돼요.</p>}
       <div className="move-controls-primary">
         <div className="move-controls-header">
           <span className="selected-pill">선택됨</span>
