@@ -22,9 +22,9 @@ function moveStatusText(moveState: MoveState, mode: TransformMode) {
   if (moveState.placementMessage) return moveState.placementMessage;
   if (!moveState.selected) return '물건을 선택해 드래그로 옮기세요';
   if (moveState.restingOnObject) return '물건 위에 놓여 있어요 · 드래그해 옮길 수 있어요';
-  if (mode === 'rotate') return '물건이나 초록 고리를 드래그해 회전하세요';
   const heightMm = moveState.heightMm ?? 0;
-  if (heightMm >= 0.5) return `바닥에서 ${Math.round(heightMm)} mm 떠 있음 · '바닥에 놓기' 버튼이나 이 안내를 눌러 내려놓으세요`;
+  if (heightMm >= 0.5) return '물건 떠 있음';
+  if (mode === 'rotate') return '물건이나 초록 고리를 드래그해 회전하세요';
   return '물건을 드래그해 바닥에서 이동 · 초록 화살표로 높이 조절';
 }
 
@@ -115,6 +115,11 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
       <button type="button" className="group-toggle" aria-pressed={groupMode} onClick={onGroupModeChange}>
         그룹 묶기{groupMode ? ` · ${groupIds.length}개 선택 · 켜짐` : ''}
       </button>
+    <div className="view-switch" aria-label="시점 선택">
+      {views.map(({ id, label }) => <button key={id} aria-pressed={view === id} onClick={() => engine.current?.setView(id)}>
+        {id === 'perspective' && <Box size={14} />}{label}
+      </button>)}
+    </div>
       {groupMode && <span>물건을 눌러 그룹에 추가·제외하세요</span>}
     </div>
     <section className={viewerClass} aria-label="3D 비교 공간">
@@ -125,11 +130,6 @@ export default function SceneViewer({ instances, unit, resetKey, selectedId, onS
     <div className="scene" ref={host} />
     {!error && !instances.length && <p className="scene-empty" role="status">비교할 물건을 공간에 추가해 주세요.</p>}
     {error && <div className="scene-error"><TriangleAlert size={30} /><h3>3D 화면을 불러오지 못했어요</h3><p>브라우저의 하드웨어 가속을 켜거나<br />WebGL을 지원하는 브라우저에서 열어 주세요.</p><button onClick={() => { setError(false); setRetry(v => v + 1); }}>다시 시도</button></div>}
-    <div className="view-switch" aria-label="시점 선택">
-      {views.map(({ id, label }) => <button key={id} aria-pressed={view === id} onClick={() => engine.current?.setView(id)}>
-        {id === 'perspective' && <Box size={14} />}{label}
-      </button>)}
-    </div>
     {instances.length > 0 && <div className="object-move-bar">
       <span role="status" className={canGroundFromStatus ? 'is-actionable' : undefined}>
         {canGroundFromStatus

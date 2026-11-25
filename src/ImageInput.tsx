@@ -341,7 +341,7 @@ export default function ImageInput({ onRead, onMeasurements, onBack, onSessionCh
           <div className="entry-example-bar">
             <div className="entry-example-copy">
               <strong>책상 예시 도면 체험</strong>
-              <span>API 키 없이 도면 검토와 3D 초안 확인</span>
+              <span>사전 도면으로 3D 초안 체험하기</span>
             </div>
             <button type="button" className="secondary-action-button" onClick={startExample}>
               <FileText size={15} />예시 도면 써보기

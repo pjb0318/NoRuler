@@ -678,7 +678,7 @@ test('drops a floating object straight to the floor with 바닥에 놓기', asyn
   await height.fill('120');
   await button('적용').click();
   await expect(height).toHaveValue('120');
-  await expect(page.locator('.object-move-bar [role="status"]')).toContainText('120 mm 떠 있음');
+  await expect(page.locator('.object-move-bar [role="status"]')).toHaveText('물건 떠 있음');
   await expect(ground).toBeEnabled();
 
   await ground.click();
@@ -702,7 +702,7 @@ test('wraps mobile placement guidance and grounds the object by tapping the guid
 
       const status = page.locator('.object-move-bar [role="status"]');
       const action = status.getByRole('button');
-      await expect(action).toContainText('169 mm 떠 있음');
+      await expect(action).toHaveText('물건 떠 있음');
       const metrics = await action.evaluate(el => ({
         width: el.clientWidth, scrollWidth: el.scrollWidth,
         height: el.clientHeight, scrollHeight: el.scrollHeight,
@@ -710,7 +710,6 @@ test('wraps mobile placement guidance and grounds the object by tapping the guid
       }));
       expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.width);
       expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.height);
-      expect(metrics.height).toBeGreaterThan(metrics.lineHeight * 2);
       const statusBox = (await status.boundingBox())!;
       const resetBox = (await page.getByLabel('물건 위치 초기화', { exact: true }).boundingBox())!;
       expect(resetBox.x >= statusBox.x + statusBox.width
