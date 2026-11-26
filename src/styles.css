@@ -1628,7 +1628,6 @@ h1, h2, h3, p { margin: 0; }
 .object-move-bar > span.is-actionable { padding: 0; pointer-events: auto; }
 .object-move-bar button.move-status-action {
   width: 100%;
-  min-height: 44px;
   border: 0;
   background: transparent;
   text-align: left;
@@ -2166,6 +2165,9 @@ h1, h2, h3, p { margin: 0; }
     font-size: 11px;
     line-height: 1.3;
     white-space: normal;
+  }
+  .object-move-bar > span.is-actionable {
+    flex: 0 1 auto;
   }
   .object-move-bar button {
     flex: none;
